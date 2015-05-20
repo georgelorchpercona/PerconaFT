@@ -2711,6 +2711,271 @@ int set_filenum_in_array(const FT &ft, const uint32_t index, FILENUM *const arra
     return 0;
 }
 
+#if 1
+// Simple memory manager to pre-allocate large blocks of memory that can be
+// sub-allocated from with no deletion of sub-blocks to try to keep many scoped
+// smaller allocations out of the heap. Example use:
+// disposable_memory_arena arena(1024);
+// temp* a = arena.allocate(5);
+// temp* b = arena.allocate(16);
+// temp* c = arena.allocate(7);
+//
+// Memory blocks are freed when arena goes out of scope/is destroyed.
+class disposable_memory_arena {
+public:
+    disposable_memory_arena(uint32_t buffer_size) {
+        _buffer_size = buffer_size;
+        _head = memory_buffer::allocate(_buffer_size, NULL);
+        _tail = _head;
+    }
+
+    ~disposable_memory_arena() {
+        delete _head;
+    }
+
+    unsigned char* allocate(uint32_t size) {
+        unsigned char* ret = NULL;
+        ret = _tail->allocate(size);
+        if (ret == NULL) {
+           _tail = memory_buffer::allocate(_buffer_size, _tail);
+           ret = _tail->allocate(size);
+        }
+        assert(ret);
+        return ret;
+    }
+
+private:
+    class memory_buffer {
+    public:
+    	static memory_buffer* allocate(uint32_t size, memory_buffer* prev) {
+//fprintf(stdout, "memory_buffer::allocate(%u, 0x%p)\n", size, prev);
+            unsigned char* buffer = new unsigned char[size];
+            return new (buffer) memory_buffer(size, buffer, prev);
+    	}
+
+        ~memory_buffer() {
+            if (_next) delete _next;
+        }
+
+        unsigned char* allocate(uint32_t size) {
+//fprintf(stdout, "0x%p : memory_buffer::allocate(%u)\n", this, size);
+            assert(size <= _size);
+            if (_position - _buffer + size >= _size) {
+//fprintf(stdout, "0x%p : memory_buffer::allocate(%u) - RETURNED NULL!!\n", this, size);
+                return NULL;
+            }
+            _position += size;
+            return _position;
+        }
+
+    private:
+        memory_buffer(uint32_t size, unsigned char* buffer, memory_buffer* prev) {
+//fprintf(stdout, "0x%p : memory_buffer::(%u, 0x%p, 0x%p)\n", this, size, buffer, prev);
+            if (prev) prev->_next = this;
+            _next = NULL;
+            _buffer = buffer + sizeof(memory_buffer);
+            _position = _buffer;
+            _size = size - sizeof(memory_buffer);
+        }
+
+
+        memory_buffer* _next;
+        unsigned char* _buffer;
+        unsigned char* _position;
+        uint32_t _size;
+    };
+
+    uint32_t _buffer_size;
+    memory_buffer* _head;
+    memory_buffer* _tail;
+};
+// During the begin_chckpoint phase, all active, non-read-only transactions are
+// logged into the recovery log. To do this, toku_txn_manager_iter_over_txns
+// must be called which locks the txn_manager for the entire duration,
+// including while performing recovery log I/O, fsync, rotation, etc. This
+// seems to cause some mutex contention as while this lock is held, any
+// interaction with the txn_manager is blocked, including creating new
+// transactions.
+//
+// The purpose of this class is to split that operation into two parts:
+// the first uses toku_txn_manager_iter_over_txns to lock the txn_manager
+// and obtain an in memory snapshot of all of the active transaction metadata
+// needed to safely log, then unlock the txn_manager; and the second to 
+// actually write all of the active transaction data to the recovery log.
+//
+// It might be interesting to see this serialize each txn into a blob that
+// can later be written directly into the log file as a byte stream after
+// harvesting rather than cherry-picking metadata and serializing it after
+// returning from toku_txn_manager_iter_over_live_txns. It would end up holding
+// the txn_manager lock a little longer but might be a cleaner code set.
+//
+// It seems that most of this class can be added directly to the checkpointer
+// rather than existing as a stand alone entity.
+//
+// Not using stl or any other structured container as the overhead seems
+// unnecessary for such a simple experiment, so just a linked list.
+class checkpoint_txn_snapshot {
+public:
+    checkpoint_txn_snapshot(checkpointer* cp) :
+        _mem(1<<17), _cp(cp), _head(NULL), _tail(NULL) {
+    }
+
+    ~checkpoint_txn_snapshot() {
+    }
+
+    // create an in memory snapshot of all active transactions
+    void snapshot_txns(txn_manager* txnmgr) {
+        int r = toku_txn_manager_iter_over_live_txns(
+            txnmgr,
+            checkpoint_txn_snapshot::snapshot_txn,
+            this);
+        assert(r == 0);
+    }
+
+    // write transaction snapshots to recovery log
+    void log_txns() {
+        txn_metadata* t = _head;
+        while (t) {
+            t->log_it();
+            _cp->increment_num_txns();
+            t = t->get_next();
+        }
+    }
+
+private:
+    void snapshot_txn(TOKUTXN txn) {
+        if (toku_txn_is_read_only(txn))
+            return;
+
+        unsigned char* tmp = _mem.allocate(sizeof(txn_metadata));
+        _tail = new (tmp) txn_metadata(txn, _tail, _mem);
+        if (_head == NULL) _head = _tail;
+    }
+
+    // static function to be used for toku_txn_manager_iter_over_live_txnx
+    // stores a snapshot of the given transaction
+    static int snapshot_txn(TOKUTXN txn, void* extra) {
+        checkpoint_txn_snapshot* ss = (checkpoint_txn_snapshot*) extra;
+        if (toku_txn_is_read_only(txn))
+            return 0;
+
+        ss->_tail = new txn_metadata(txn, ss->_tail, ss->_mem);
+        if (ss->_head == NULL) ss->_head = ss->_tail;
+        return 0;
+    }
+
+    // private class that wraps the metadata for a single trasaction and manages
+    // any dynamic memory needed to properly represent the transaction in the
+    // log record
+    class txn_metadata {
+    public:
+        txn_metadata(TOKUTXN txn, txn_metadata* prev, disposable_memory_arena& mem) {
+            if (prev) prev->_next = this;
+            _next = NULL;
+            _logger = txn->logger;
+            _state = toku_txn_get_state(txn);
+            _open_filenums.num = txn->open_fts.size();
+            _open_filenums.filenums = (FILENUM*)mem.allocate(sizeof(FILENUM) * _open_filenums.num);
+            int r = txn->open_fts.iterate<FILENUM, set_filenum_in_array>(_open_filenums.filenums);
+            invariant(r==0);
+            switch (_state) {
+            case TOKUTXN_LIVE:{
+                _xid = toku_txn_get_txnid(txn);
+                _parent_xid = toku_txn_get_txnid(toku_logger_txn_parent(txn));
+                _rollentry_raw_count = txn->roll_info.rollentry_raw_count;
+                _force_fsync_on_commit = txn->force_fsync_on_commit;
+                _num_rollback_nodes = txn->roll_info.num_rollback_nodes;
+                _num_rollentries = txn->roll_info.num_rollentries;
+                _spilled_rollback_head = txn->roll_info.spilled_rollback_head;
+                _spilled_rollback_tail = txn->roll_info.spilled_rollback_tail;
+                _current_rollback = txn->roll_info.current_rollback;
+            } break;
+            case TOKUTXN_PREPARING: {
+                _xid = toku_txn_get_txnid(txn);
+                toku_txn_get_prepared_xa_xid(txn, &_xa_xid);
+                _force_fsync_on_commit = txn->force_fsync_on_commit;
+                _num_rollback_nodes = txn->roll_info.num_rollback_nodes;
+                _num_rollentries = txn->roll_info.num_rollentries;
+                _spilled_rollback_head = txn->roll_info.spilled_rollback_head;
+                _spilled_rollback_tail = txn->roll_info.spilled_rollback_tail;
+                _current_rollback = txn->roll_info.current_rollback;
+            } break;
+            case TOKUTXN_RETIRED:
+            case TOKUTXN_COMMITTING:
+            case TOKUTXN_ABORTING: {
+                assert(0);
+            } break;
+            }
+        }
+
+        ~txn_metadata() {
+        }
+
+        void log_it() {
+            switch (_state) {
+            case TOKUTXN_LIVE: {
+                toku_log_xstillopen(_logger, NULL, 0, NULL,
+                                    _xid,
+                                    _parent_xid,
+                                    _rollentry_raw_count,
+                                    _open_filenums,
+                                    _force_fsync_on_commit,
+                                    _num_rollback_nodes,
+                                    _num_rollentries,
+                                    _spilled_rollback_head,
+                                    _spilled_rollback_tail,
+                                    _current_rollback);
+            } break;
+            case TOKUTXN_PREPARING: {
+                toku_log_xstillopenprepared(_logger, NULL, 0, NULL,
+                                            _xid,
+                                            &_xa_xid,
+                                            _rollentry_raw_count,
+                                            _open_filenums,
+                                            _force_fsync_on_commit,
+                                            _num_rollback_nodes,
+                                            _num_rollentries,
+                                            _spilled_rollback_head,
+                                            _spilled_rollback_tail,
+                                            _current_rollback);
+            } break;
+            default: {
+                assert(0);
+            }
+            }
+        }
+
+        txn_metadata* get_next() {
+            return _next;
+        }
+
+    private:
+        txn_metadata() { assert(0); }
+        txn_metadata* _next;
+        TOKULOGGER _logger;
+        TOKUTXN_STATE _state;
+        TXNID_PAIR _xid;
+        TXNID_PAIR _parent_xid;
+        TOKU_XA_XID _xa_xid;
+        uint64_t _rollentry_raw_count;
+        FILENUMS _open_filenums;
+        uint8_t _force_fsync_on_commit;
+        uint64_t _num_rollback_nodes;
+        uint64_t _num_rollentries;
+        BLOCKNUM _spilled_rollback_head;
+        BLOCKNUM _spilled_rollback_tail;
+        BLOCKNUM _current_rollback;
+    };
+
+private:
+    disposable_memory_arena _mem;
+    checkpointer* _cp;
+    txn_metadata* _head;
+    txn_metadata* _tail;
+};
+
+#else
+
 static int log_open_txn (TOKUTXN txn, void* extra) {
     int r;
     checkpointer* cp = (checkpointer *)extra;
@@ -2718,6 +2983,7 @@ static int log_open_txn (TOKUTXN txn, void* extra) {
     FILENUMS open_filenums;
     uint32_t num_filenums = txn->open_fts.size();
     FILENUM array[num_filenums];
+
     if (toku_txn_is_read_only(txn)) {
         goto cleanup;
     }
@@ -2772,6 +3038,7 @@ static int log_open_txn (TOKUTXN txn, void* extra) {
 cleanup:
     return 0;
 }
+#endif
 
 // Requires:   All three checkpoint-relevant locks must be held (see checkpoint.c).
 // Algorithm:  Write a checkpoint record to the log, noting the LSN of that record.
@@ -4540,11 +4807,18 @@ void checkpointer::log_begin_checkpoint() {
     m_cf_list->m_active_fileid.iterate<void *, iterate_log_fassociate::fn>(nullptr);
 
     // Write open transactions to the log.
+#if 1
+    checkpoint_txn_snapshot txn_snapshot(this);
+    txn_snapshot.snapshot_txns(m_logger->txn_manager);
+    txn_snapshot.log_txns();
+    r = 0;
+#else
     r = toku_txn_manager_iter_over_live_txns(
         m_logger->txn_manager,
         log_open_txn,
         this
         );
+#endif
     assert(r == 0);
 }
 
