@@ -173,6 +173,13 @@ status_init(void) {
     STATUS_INIT(CP_LONG_BEGIN_COUNT,                    CHECKPOINT_LONG_BEGIN_COUNT, UINT64,   "long checkpoint begin count", TOKU_ENGINE_STATUS|TOKU_GLOBAL_STATUS);
     STATUS_INIT(CP_LONG_BEGIN_TIME,                     CHECKPOINT_LONG_BEGIN_TIME, UINT64,   "long checkpoint begin time", TOKU_ENGINE_STATUS|TOKU_GLOBAL_STATUS);
 
+    STATUS_INIT(CP_END_TIME,                            CHECKPOINT_END_TIME, UINT64,   "checkpoint end time", TOKU_ENGINE_STATUS|TOKU_GLOBAL_STATUS);
+    STATUS_INIT(CP_LONG_END_COUNT,                      CHECKPOINT_LONG_END_COUNT, UINT64,   "long checkpoint end count", TOKU_ENGINE_STATUS|TOKU_GLOBAL_STATUS);
+    STATUS_INIT(CP_LONG_END_TIME,                       CHECKPOINT_LONG_END_TIME, UINT64,   "long checkpoint end time", TOKU_ENGINE_STATUS|TOKU_GLOBAL_STATUS);
+
+    STATUS_INIT(CP_INTERNAL_NODES_WRITTEN,              CHECKPOINT_INTERNAL_NODES_WRITTEN, UINT64,   "number of internal nodes written during checkpoint end", TOKU_ENGINE_STATUS|TOKU_GLOBAL_STATUS);
+    STATUS_INIT(CP_LEAF_NODES_WRITTEN,                  CHECKPOINT_LEAF_NODES_WRITTEN, UINT64,   "number of leaf nodes written during checkpoint end", TOKU_ENGINE_STATUS|TOKU_GLOBAL_STATUS);
+
     cp_status.initialized = true;
 }
 #undef STATUS_INIT
@@ -199,7 +206,8 @@ static toku_pthread_rwlock_t low_priority_multi_operation_lock;
 static bool initialized = false;     // sanity check
 static volatile bool locked_mo = false;       // true when the multi_operation write lock is held (by checkpoint)
 static volatile bool locked_cs = false;       // true when the checkpoint_safe write lock is held (by checkpoint)
-static volatile uint64_t toku_checkpoint_long_threshold = 1000000;
+static volatile uint64_t toku_checkpoint_begin_long_threshold = 1000000; // 1 second
+static volatile uint64_t toku_checkpoint_end_long_threshold = 1000000 * 60; // 1 minute
 
 // Note following static functions are called from checkpoint internal logic only,
 // and use the "writer" calls for locking and unlocking.
@@ -363,7 +371,12 @@ toku_checkpoint(CHECKPOINTER cp, TOKULOGGER logger,
     if (callback_f) {
         callback_f(extra);      // callback is called with checkpoint_safe_lock still held
     }
-    toku_cachetable_end_checkpoint(cp, logger, callback2_f, extra2);
+
+    uint64_t t_checkpoint_end_start = toku_current_time_microsec();
+    toku_cachetable_end_checkpoint(cp, logger, callback2_f, extra2,
+                                   &STATUS_VALUE(CP_INTERNAL_NODES_WRITTEN),
+                                   &STATUS_VALUE(CP_LEAF_NODES_WRITTEN));
+    uint64_t t_checkpoint_end_end = toku_current_time_microsec();
 
     SET_CHECKPOINT_FOOTPRINT(50);
     if (logger) {
@@ -378,9 +391,15 @@ toku_checkpoint(CHECKPOINTER cp, TOKULOGGER logger,
     STATUS_VALUE(CP_CHECKPOINT_COUNT)++;
     uint64_t duration = t_checkpoint_begin_end - t_checkpoint_begin_start;
     STATUS_VALUE(CP_BEGIN_TIME) += duration;
-    if (duration >= toku_checkpoint_long_threshold) {
+    if (duration >= toku_checkpoint_begin_long_threshold) {
         STATUS_VALUE(CP_LONG_BEGIN_TIME) += duration;
         STATUS_VALUE(CP_LONG_BEGIN_COUNT) += 1;
+    }
+    duration = t_checkpoint_end_end - t_checkpoint_end_start;
+    STATUS_VALUE(CP_END_TIME) += duration;
+    if (duration >= toku_checkpoint_end_long_threshold) {
+        STATUS_VALUE(CP_LONG_END_TIME) += duration;
+        STATUS_VALUE(CP_LONG_END_COUNT) += 1;
     }
     STATUS_VALUE(CP_TIME_CHECKPOINT_DURATION) += (uint64_t) ((time_t) STATUS_VALUE(CP_TIME_LAST_CHECKPOINT_END)) - ((time_t) STATUS_VALUE(CP_TIME_LAST_CHECKPOINT_BEGIN));
     STATUS_VALUE(CP_TIME_CHECKPOINT_DURATION_LAST) = (uint64_t) ((time_t) STATUS_VALUE(CP_TIME_LAST_CHECKPOINT_END)) - ((time_t) STATUS_VALUE(CP_TIME_LAST_CHECKPOINT_BEGIN));

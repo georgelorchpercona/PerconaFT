@@ -468,6 +468,8 @@ public:
     TOKULOGGER get_logger();
     // used during begin_checkpoint
     void increment_num_txns();
+    uint64_t get_internal_nodes_written();
+    uint64_t get_leaf_nodes_written();
 private:
     uint32_t m_checkpoint_num_txns;   // how many transactions are in the checkpoint
     TOKULOGGER m_logger;
@@ -479,6 +481,8 @@ private:
     evictor *m_ev;
     bool m_checkpointer_cron_init;
     bool m_checkpointer_init;
+    uint64_t m_internal_nodes_written;
+    uint64_t m_leaf_nodes_written;
     
     // variable used by the checkpoint thread to know
     // when all work induced by cloning on client threads is done
