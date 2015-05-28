@@ -189,7 +189,9 @@ char *toku_cachefile_fname_in_cwd (CACHEFILE cf);
 void toku_cachetable_begin_checkpoint (CHECKPOINTER cp, struct tokulogger *logger);
 
 void toku_cachetable_end_checkpoint(CHECKPOINTER cp, struct tokulogger *logger, 
-                                   void (*testcallback_f)(void*),  void * testextra);
+                                   void (*testcallback_f)(void*),  void * testextra,
+                                   uint64_t *internal_nodes_written,
+                                   uint64_t *leaf_nodes_written);
 
 
 // Shuts down checkpoint thread

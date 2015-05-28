@@ -2798,8 +2798,12 @@ int toku_cachetable_get_checkpointing_user_data_status (void) {
 //             Use end_checkpoint callback to fsync dictionary and log, and to free unused blocks
 // Note:       If testcallback is null (for testing purposes only), call it after writing dictionary but before writing log
 void toku_cachetable_end_checkpoint(CHECKPOINTER cp, TOKULOGGER UU(logger),
-                               void (*testcallback_f)(void*),  void* testextra) {
+                                    void (*testcallback_f)(void*),  void* testextra,
+                                    uint64_t *internal_nodes_written,
+                                    uint64_t *leaf_nodes_written) {
     cp->end_checkpoint(testcallback_f, testextra);
+    *internal_nodes_written = cp->get_internal_nodes_written();
+    *leaf_nodes_written = cp->get_leaf_nodes_written();
 }
 
 TOKULOGGER toku_cachefile_logger (CACHEFILE cf) {
@@ -4388,6 +4392,7 @@ int checkpointer::init(pair_list *_pl,
     if (r == 0) {
         m_checkpointer_cron_init = true;
     }
+    m_internal_nodes_written = m_leaf_nodes_written = 0;
     m_checkpointer_init = true;
     return r;
 }
@@ -4438,6 +4443,14 @@ TOKULOGGER checkpointer::get_logger() {
 
 void checkpointer::increment_num_txns() {
     m_checkpoint_num_txns++;
+}
+
+uint64_t checkpointer::get_internal_nodes_written() {
+    return m_internal_nodes_written;
+}
+
+uint64_t checkpointer::get_leaf_nodes_written() {
+    return m_leaf_nodes_written;
 }
 
 struct iterate_begin_checkpoint {
@@ -4648,6 +4661,12 @@ void checkpointer::checkpoint_pending_pairs() {
         // if still pending, clear the pending bit and write out the node
         pair_lock(p);
         m_list->read_list_unlock();
+        if (p->dirty && p->checkpoint_pending) {
+            if (((FTNODE)p->value_data)->height == 0)
+                m_leaf_nodes_written++;
+            else
+                m_internal_nodes_written++;
+        }
         write_pair_for_checkpoint_thread(m_ev, p);
         pair_unlock(p);
         m_list->read_list_lock();
