@@ -808,11 +808,59 @@ void toku_ftnode_leaf_rebalance(FTNODE node, unsigned int basementnodesize) {
     assert(node->height == 0);
     assert(node->dirty);
 
-    uint32_t num_orig_basements = node->n_children;
+    static uint32_t rebalances_total = 0;
+    static uint32_t rebalances_skipped = 0;
+
+    const uint32_t desiredbasementvariance = basementnodesize / 4;
+    const uint32_t maxlowerbasementbound = basementnodesize / 4;
+    const uint32_t lowerbasementbound = basementnodesize - desiredbasementvariance;
+    const uint32_t upperbasementbound = basementnodesize + desiredbasementvariance;
+    const uint32_t maxupperbasementbound = basementnodesize * 2;
+    const uint32_t maxbasementweight = 6;
+
+    uint32_t bn_outofbounds = 0; // weight of oversize or undersized
+
+    rebalances_total++;
+
+    const uint32_t num_orig_basements = node->n_children;
+    uint32_t total_basement_size = 0;
+    const uint32_t tmp_seqinsert = BLB_SEQINSERT(node, num_orig_basements - 1);
+    MSN max_msn = ZERO_MSN;
+
     // Count number of leaf entries in this leaf (num_le).
     uint32_t num_le = 0;
     for (uint32_t i = 0; i < num_orig_basements; i++) {
         num_le += BLB_DATA(node, i)->num_klpairs();
+        uint32_t bn_size = BLB_DATA(node, i)->get_disk_size();
+        total_basement_size += bn_size;
+
+        if (bn_size < maxlowerbasementbound) bn_outofbounds += maxbasementweight;
+        else if (bn_size < lowerbasementbound) bn_outofbounds++;
+        else if (bn_size > upperbasementbound) bn_outofbounds++;
+        else if (bn_size > maxupperbasementbound) bn_outofbounds += maxbasementweight;
+
+        MSN curr_msn = BLB_MAX_MSN_APPLIED(node, i);
+        max_msn = (curr_msn.msn > max_msn.msn) ? curr_msn : max_msn;
+    }
+
+    if (bn_outofbounds < maxbasementweight
+        && node->n_children == node->pivotkeys.num_pivots() + 1) {
+        rebalances_skipped++;
+        if (rebalances_total % 100 == 0) {
+            fprintf(stderr, "Of %u rebalances, %u were skipped, that's %u to you and me.\n",
+                    rebalances_total, rebalances_skipped, (rebalances_skipped * 100) / rebalances_total);
+        }
+
+        for (uint32_t i = 0; i < num_orig_basements; i++) {
+            BLB_MAX_MSN_APPLIED(node, i) = max_msn;
+        }
+        node->max_msn_applied_to_node_on_disk = max_msn;
+        return;
+    } else {
+        if (rebalances_total % 100 == 0) {
+            fprintf(stderr, "Of %u rebalances, %u were skipped, that's %u to you and me.\n",
+                    rebalances_total, rebalances_skipped, (rebalances_skipped * 100) / rebalances_total);
+        }
     }
 
     uint32_t num_alloc = num_le ? num_le : 1;  // simplify logic below by always having at least one entry per array
@@ -905,14 +953,14 @@ void toku_ftnode_leaf_rebalance(FTNODE node, unsigned int basementnodesize) {
     // Need to figure out how to properly deal with seqinsert.
     // I am not happy with how this is being
     // handled with basement nodes
-    uint32_t tmp_seqinsert = BLB_SEQINSERT(node, num_orig_basements - 1);
+//    uint32_t tmp_seqinsert = BLB_SEQINSERT(node, num_orig_basements - 1);
 
     // choose the max msn applied to any basement as the max msn applied to all new basements
-    MSN max_msn = ZERO_MSN;
-    for (uint32_t i = 0; i < num_orig_basements; i++) {
-        MSN curr_msn = BLB_MAX_MSN_APPLIED(node,i);
-        max_msn = (curr_msn.msn > max_msn.msn) ? curr_msn : max_msn;
-    }
+//    MSN max_msn = ZERO_MSN;
+//    for (uint32_t i = 0; i < num_orig_basements; i++) {
+//        MSN curr_msn = BLB_MAX_MSN_APPLIED(node,i);
+//        max_msn = (curr_msn.msn > max_msn.msn) ? curr_msn : max_msn;
+//    }
     // remove the basement node in the node, we've saved a copy
     for (uint32_t i = 0; i < num_orig_basements; i++) {
         // save a reference to the old basement nodes
