@@ -1164,6 +1164,9 @@ read_compressed_sub_block(struct rbuf *rb, struct sub_block *sb)
     // let's check the checksum
     uint32_t actual_xsum = toku_x1764_memory((char *)sb->compressed_ptr-8, 8+sb->compressed_size);
     if (sb->xsum != actual_xsum) {
+        fprintf(stderr,
+                "Checksum failure in %s.\n", __FUNCTION__);
+        dump_bad_block((Bytef *)rb->buf, rb->size);
         r = TOKUDB_BAD_CHECKSUM;
     }
     return r;
@@ -1209,6 +1212,9 @@ verify_ftnode_sub_block (struct sub_block *sb)
     uint32_t stored_xsum = toku_dtoh32(*((uint32_t *)((char *)sb->uncompressed_ptr + data_size)));
     uint32_t actual_xsum = toku_x1764_memory(sb->uncompressed_ptr, data_size);
     if (stored_xsum != actual_xsum) {
+        fprintf(stderr,
+                "Checksum failure in %s.\n",
+                __FUNCTION__);
         dump_bad_block((Bytef *) sb->uncompressed_ptr, sb->uncompressed_size);
         r = TOKUDB_BAD_CHECKSUM;
     }
@@ -1401,6 +1407,10 @@ deserialize_ftnode_partition(
     int r = 0;
     r = verify_ftnode_sub_block(sb);
     if (r != 0) {
+        if (r == TOKUDB_BAD_CHECKSUM)
+            fprintf(stderr,
+                    "Checksum failure in %s.\n",
+                    __FUNCTION__);
         goto exit;
     }
     uint32_t data_size;
@@ -2259,27 +2269,43 @@ toku_deserialize_bp_from_disk(FTNODE node, FTNODE_DISK_DATA ndd, int childnum, i
 
     toku::scoped_malloc_aligned raw_block_buf(padded_size, 512);
     uint8_t *raw_block = reinterpret_cast<uint8_t *>(raw_block_buf.get());
-    rbuf_init(&rb, pad_at_beginning+raw_block, curr_size);
-    tokutime_t t0 = toku_time_now();
-
-    // read the block
-    assert(0==((unsigned long long)raw_block)%512); // for O_DIRECT
-    assert(0==(padded_size)%512);
-    assert(0==(node_offset+curr_offset-pad_at_beginning)%512);
-    ssize_t rlen = toku_os_pread(fd, raw_block, padded_size, node_offset+curr_offset-pad_at_beginning);
-    assert((DISKOFF)rlen >= pad_at_beginning + curr_size); // we read in at least enough to get what we wanted
-    assert((DISKOFF)rlen <= padded_size);                  // we didn't read in too much.
-
-    tokutime_t t1 = toku_time_now();
-
-    // read sub block
+    ssize_t rlen = 0;
     struct sub_block curr_sb;
-    sub_block_init(&curr_sb);
-    r = read_compressed_sub_block(&rb, &curr_sb);
-    if (r != 0) {
-        return r;
+    tokutime_t t0, t1;
+
+    static const uint32_t retries = 3;
+    uint32_t retry = 0;
+    for (; retry < retries; retry++) {
+        rbuf_init(&rb, pad_at_beginning+raw_block, curr_size);
+        t0 = toku_time_now();
+
+        // read the block
+        assert(0==((unsigned long long)raw_block)%512); // for O_DIRECT
+        assert(0==(padded_size)%512);
+        assert(0==(node_offset+curr_offset-pad_at_beginning)%512);
+        rlen = toku_os_pread(fd, raw_block, padded_size, node_offset+curr_offset-pad_at_beginning);
+        assert((DISKOFF)rlen >= pad_at_beginning + curr_size); // we read in at least enough to get what we wanted
+        assert((DISKOFF)rlen <= padded_size);                  // we didn't read in too much.
+
+        t1 = toku_time_now();
+
+        // read sub block
+        sub_block_init(&curr_sb);
+        r = read_compressed_sub_block(&rb, &curr_sb);
+        if (r != 0) {
+            if (r == TOKUDB_BAD_CHECKSUM) {
+                fprintf(stderr, "Checksum failure in %s on try %u at blocknum[%ld] offset[%ld] size[%ld].\n",
+                        __FUNCTION__, retry, node->blocknum.b,
+                        node_offset, total_node_disk_size);
+                continue;
+            } else {
+                return r;
+            }
+        }
+        invariant(curr_sb.compressed_ptr != NULL);
     }
-    invariant(curr_sb.compressed_ptr != NULL);
+    if (retry == retries)
+        return r;
 
     // decompress
     toku::scoped_malloc uncompressed_buf(curr_sb.uncompressed_size);
@@ -2291,6 +2317,11 @@ toku_deserialize_bp_from_disk(FTNODE node, FTNODE_DISK_DATA ndd, int childnum, i
     tokutime_t t2 = toku_time_now();
 
     r = deserialize_ftnode_partition(&curr_sb, node, childnum, bfe->ft->cmp);
+    if (r == TOKUDB_BAD_CHECKSUM) {
+        fprintf(stderr, "Checksum failure in %s at blocknum[%ld] offset[%ld] size[%ld].\n",
+                __FUNCTION__, node->blocknum.b,
+                node_offset, total_node_disk_size);
+    }
 
     tokutime_t t3 = toku_time_now();
 
