@@ -237,6 +237,7 @@ namespace ftcxx {
         uint8_t _memcmp_magic;
         uint32_t _pagesize;
         Slice _descriptor;
+        uint32_t _leaf_rebalance_mode;
 
     public:
         DBBuilder()
@@ -245,7 +246,8 @@ namespace ftcxx {
               _fanout(0),
               _memcmp_magic(0),
               _pagesize(0),
-              _descriptor()
+              _descriptor(),
+              _leaf_rebalance_mode(0)
         {}
 
         DB open(const DBEnv &env, const DBTxn &txn, const char *fname, const char *dbname, DBTYPE dbtype, uint32_t flags, int mode) const {
@@ -275,6 +277,11 @@ namespace ftcxx {
 
             if (_pagesize) {
                 r = db->set_pagesize(db, _pagesize);
+                handle_ft_retval(r);
+            }
+
+            if (_leaf_rebalance_mode) {
+                r = db->set_leaf_rebalance_mode(db, _leaf_rebalance_mode);
                 handle_ft_retval(r);
             }
 
@@ -330,6 +337,13 @@ namespace ftcxx {
             _descriptor = desc.owned();
             return *this;
         }
+
+        DBBuilder& set_leaf_rebalance_mode(uint32_t leaf_rebalance_mode) {
+            _leaf_rebalance_mode = leaf_rebalance_mode;
+            return *this;
+        }
+
+
     };
 
 } // namespace ftcxx

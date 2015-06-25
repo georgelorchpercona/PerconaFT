@@ -2339,7 +2339,9 @@ static void putbuf_int64 (struct dbuf *dbuf, long long v) {
     putbuf_int32(dbuf, v&0xFFFFFFFF);
 }
 
-static struct leaf_buf *start_leaf (struct dbout *out, const DESCRIPTOR UU(desc), int64_t lblocknum, TXNID xid, uint32_t UU(target_nodesize)) {
+static struct leaf_buf *start_leaf (struct dbout *out,
+                                    const DESCRIPTOR UU(desc),
+                                    int64_t lblocknum, TXNID xid) {
     invariant(lblocknum < out->n_translations_limit);
 
     struct leaf_buf *XMALLOC(lbuf);
@@ -2365,11 +2367,20 @@ static struct leaf_buf *start_leaf (struct dbout *out, const DESCRIPTOR UU(desc)
     return lbuf;
 }
 
-static void finish_leafnode (struct dbout *out, struct leaf_buf *lbuf, int progress_allocation, FTLOADER bl, uint32_t target_basementnodesize, enum toku_compression_method target_compression_method);
-static int write_nonleaves (FTLOADER bl, FIDX pivots_fidx, struct dbout *out, struct subtrees_info *sts, const DESCRIPTOR descriptor, uint32_t target_nodesize, uint32_t target_basementnodesize, enum toku_compression_method target_compression_method);
-static void add_pair_to_leafnode (struct leaf_buf *lbuf, unsigned char *key, int keylen, unsigned char *val, int vallen, int this_leafentry_size, STAT64INFO stats_to_update);
-static int write_translation_table (struct dbout *out, long long *off_of_translation_p);
-static int write_header (struct dbout *out, long long translation_location_on_disk, long long translation_size_on_disk);
+static void finish_leafnode (struct dbout *out, struct leaf_buf *lbuf,
+                             int progress_allocation, FTLOADER bl);
+static int write_nonleaves (FTLOADER bl, FIDX pivots_fidx, struct dbout *out,
+                            struct subtrees_info *sts,
+                            const DESCRIPTOR descriptor);
+static void add_pair_to_leafnode (struct leaf_buf *lbuf, unsigned char *key,
+                                  int keylen, unsigned char *val, int vallen,
+                                  int this_leafentry_size,
+                                  STAT64INFO stats_to_update);
+static int write_translation_table (struct dbout *out,
+                                    long long *off_of_translation_p);
+static int write_header (struct dbout *out,
+                         long long translation_location_on_disk,
+                         long long translation_size_on_disk);
 
 static void drain_writer_q(QUEUE q) {
     void *item;
@@ -2416,7 +2427,8 @@ static int toku_loader_write_ft_from_q (FTLOADER bl,
                                          uint32_t target_nodesize,
                                          uint32_t target_basementnodesize,
                                          enum toku_compression_method target_compression_method,
-                                         uint32_t target_fanout)
+                                         uint32_t target_fanout,
+                                         uint32_t target_leaf_rebalance_mode)
 // Effect: Consume a sequence of rowsets work from a queue, creating a fractal tree.  Closes fd.
 {
     // set the number of fractal tree writer threads so that we can partition memory in the merger
@@ -2447,7 +2459,10 @@ static int toku_loader_write_ft_from_q (FTLOADER bl,
 
     // TODO: (Zardosht/Yoni/Leif), do this code properly
     struct ft ft;
-    toku_ft_init(&ft, (BLOCKNUM){0}, bl->load_lsn, root_xid_that_created, target_nodesize, target_basementnodesize, target_compression_method, target_fanout);
+    toku_ft_init(&ft, (BLOCKNUM){0}, bl->load_lsn, root_xid_that_created,
+                 target_nodesize, target_basementnodesize,
+                 target_compression_method, target_fanout,
+                 target_leaf_rebalance_mode);
 
     struct dbout out;
     ZERO_STRUCT(out);
@@ -2492,7 +2507,7 @@ static int toku_loader_write_ft_from_q (FTLOADER bl,
     invariant(result == 0); // can not fail since translations reserved above
 
     TXNID le_xid = leafentry_xid(bl, which_db);
-    struct leaf_buf *lbuf = start_leaf(&out, descriptor, lblock, le_xid, target_nodesize);
+    struct leaf_buf *lbuf = start_leaf(&out, descriptor, lblock, le_xid);
     uint64_t n_rows_remaining = bl->n_rows;
     uint64_t old_n_rows_remaining = bl->n_rows;
 
@@ -2547,7 +2562,7 @@ static int toku_loader_write_ft_from_q (FTLOADER bl,
                     break;
                 }
 
-                finish_leafnode(&out, lbuf, progress_this_node, bl, target_basementnodesize, target_compression_method);
+                finish_leafnode(&out, lbuf, progress_this_node, bl);
                 lbuf = NULL;
 
                 r = allocate_block(&out, &lblock);
@@ -2556,7 +2571,7 @@ static int toku_loader_write_ft_from_q (FTLOADER bl,
                     if (result == 0) result = r;
                     break;
                 }
-                lbuf = start_leaf(&out, descriptor, lblock, le_xid, target_nodesize);
+                lbuf = start_leaf(&out, descriptor, lblock, le_xid);
             }
 
             add_pair_to_leafnode(lbuf, (unsigned char *) key.data, key.size, (unsigned char *) val.data, val.size, this_leafentry_size, &deltas);
@@ -2585,7 +2600,7 @@ static int toku_loader_write_ft_from_q (FTLOADER bl,
         allocate_node(&sts, lblock);
         {
             int p = progress_allocation/2;
-            finish_leafnode(&out, lbuf, p, bl, target_basementnodesize, target_compression_method);
+            finish_leafnode(&out, lbuf, p, bl);
             progress_allocation -= p;
         }
     }
@@ -2610,7 +2625,7 @@ static int toku_loader_write_ft_from_q (FTLOADER bl,
         }
     }
 
-    r = write_nonleaves(bl, pivots_file, &out, &sts, descriptor, target_nodesize, target_basementnodesize, target_compression_method);
+    r = write_nonleaves(bl, pivots_file, &out, &sts, descriptor);
     if (r) {
         result = r; goto error;
     }
@@ -2694,18 +2709,30 @@ int toku_loader_write_ft_from_q_in_C (FTLOADER                bl,
                                       uint32_t                 target_nodesize,
                                       uint32_t                 target_basementnodesize,
                                       enum toku_compression_method target_compression_method,
-                                      uint32_t                 target_fanout)
+                                      uint32_t                 target_fanout,
+                                      uint32_t                 target_leaf_rebalance_mode)
 // This is probably only for testing.
 {
     target_nodesize = target_nodesize == 0 ? default_loader_nodesize : target_nodesize;
     target_basementnodesize = target_basementnodesize == 0 ? default_loader_basementnodesize : target_basementnodesize;
-    return toku_loader_write_ft_from_q (bl, descriptor, fd, progress_allocation, q, total_disksize_estimate, which_db, target_nodesize, target_basementnodesize, target_compression_method, target_fanout);
+    return toku_loader_write_ft_from_q (bl, descriptor, fd, progress_allocation,
+                                        q, total_disksize_estimate, which_db,
+                                        target_nodesize, target_basementnodesize,
+                                        target_compression_method, target_fanout,
+                                        target_leaf_rebalance_mode);
 }
 
 
 static void* fractal_thread (void *ftav) {
     struct fractal_thread_args *fta = (struct fractal_thread_args *)ftav;
-    int r = toku_loader_write_ft_from_q (fta->bl, fta->descriptor, fta->fd, fta->progress_allocation, fta->q, fta->total_disksize_estimate, fta->which_db, fta->target_nodesize, fta->target_basementnodesize, fta->target_compression_method, fta->target_fanout);
+    int r = toku_loader_write_ft_from_q (fta->bl, fta->descriptor, fta->fd,
+                                         fta->progress_allocation, fta->q,
+                                         fta->total_disksize_estimate,
+                                         fta->which_db, fta->target_nodesize,
+                                         fta->target_basementnodesize,
+                                         fta->target_compression_method,
+                                         fta->target_fanout,
+                                         fta->target_leaf_rebalance_mode);
     fta->errno_result = r;
     return NULL;
 }
@@ -2736,7 +2763,8 @@ static int loader_do_i (FTLOADER bl,
             r = get_error_errno(); goto error;
         }
 
-        uint32_t target_nodesize, target_basementnodesize, target_fanout;
+        uint32_t target_nodesize, target_basementnodesize, target_fanout,
+                 target_leaf_rebalance_mode;
         enum toku_compression_method target_compression_method;
         r = dest_db->get_pagesize(dest_db, &target_nodesize);
         invariant_zero(r);
@@ -2745,6 +2773,8 @@ static int loader_do_i (FTLOADER bl,
         r = dest_db->get_compression_method(dest_db, &target_compression_method);
         invariant_zero(r);
         r = dest_db->get_fanout(dest_db, &target_fanout);
+        invariant_zero(r);
+        r = dest_db->get_leaf_rebalance_mode(dest_db, &target_leaf_rebalance_mode);
         invariant_zero(r);
 
         if (bl->allow_puts) {
@@ -2765,7 +2795,8 @@ static int loader_do_i (FTLOADER bl,
                 target_nodesize,
                 target_basementnodesize,
                 target_compression_method,
-                target_fanout
+                target_fanout,
+                target_leaf_rebalance_mode
             };
 
             r = toku_pthread_create(bl->fractal_threads+which_db, NULL, fractal_thread, (void*)&fta);
@@ -2792,9 +2823,16 @@ static int loader_do_i (FTLOADER bl,
             }
         } else {
             toku_queue_eof(bl->fractal_queues[which_db]);
-            r = toku_loader_write_ft_from_q(bl, descriptor, fd, progress_allocation, 
-                                            bl->fractal_queues[which_db], bl->extracted_datasizes[which_db], which_db, 
-                                            target_nodesize, target_basementnodesize, target_compression_method, target_fanout);
+            r = toku_loader_write_ft_from_q(bl, descriptor, fd,
+                                            progress_allocation, 
+                                            bl->fractal_queues[which_db],
+                                            bl->extracted_datasizes[which_db],
+                                            which_db, 
+                                            target_nodesize,
+                                            target_basementnodesize,
+                                            target_compression_method,
+                                            target_fanout,
+                                            target_leaf_rebalance_mode);
         }
     }
 
@@ -2958,7 +2996,8 @@ static int write_literal(struct dbout *out, void*data,  size_t len) {
     return result;
 }
 
-static void finish_leafnode (struct dbout *out, struct leaf_buf *lbuf, int progress_allocation, FTLOADER bl, uint32_t target_basementnodesize, enum toku_compression_method target_compression_method) {
+static void finish_leafnode (struct dbout *out, struct leaf_buf *lbuf,
+                             int progress_allocation, FTLOADER bl) {
     int result = 0;
 
     // serialize leaf to buffer
@@ -2966,7 +3005,10 @@ static void finish_leafnode (struct dbout *out, struct leaf_buf *lbuf, int progr
     size_t uncompressed_serialized_leaf_size = 0;
     char *serialized_leaf = NULL;
     FTNODE_DISK_DATA ndd = NULL;
-    result = toku_serialize_ftnode_to_memory(lbuf->node, &ndd, target_basementnodesize, target_compression_method, true, true, &serialized_leaf_size, &uncompressed_serialized_leaf_size, &serialized_leaf);
+    result = toku_serialize_ftnode_to_memory(out->ft, lbuf->node, &ndd,
+                                             true, true, &serialized_leaf_size,
+                                             &uncompressed_serialized_leaf_size,
+                                             &serialized_leaf);
 
     // write it out
     if (result == 0) {
@@ -3154,9 +3196,11 @@ static int setup_nonleaf_block (int n_children,
     return result;
 }
 
-static void write_nonleaf_node (FTLOADER bl, struct dbout *out, int64_t blocknum_of_new_node, int n_children,
+static void write_nonleaf_node (FTLOADER bl, struct dbout *out,
+                                int64_t blocknum_of_new_node, int n_children,
                                 DBT *pivots, /* must free this array, as well as the things it points t */
-                                struct subtree_info *subtree_info, int height, const DESCRIPTOR UU(desc), uint32_t UU(target_nodesize), uint32_t target_basementnodesize, enum toku_compression_method target_compression_method)
+                                struct subtree_info *subtree_info, int height,
+                                const DESCRIPTOR UU(desc))
 {
     //Nodes do not currently touch descriptors
     invariant(height > 0);
@@ -3179,7 +3223,9 @@ static void write_nonleaf_node (FTLOADER bl, struct dbout *out, int64_t blocknum
         size_t n_uncompressed_bytes;
         char *bytes;
         int r;
-        r = toku_serialize_ftnode_to_memory(node, &ndd, target_basementnodesize, target_compression_method, true, true, &n_bytes, &n_uncompressed_bytes, &bytes);
+        r = toku_serialize_ftnode_to_memory(out->ft, node, &ndd,
+                                            true, true, &n_bytes,
+                                            &n_uncompressed_bytes, &bytes);
         if (r) {
             result = r;
         } else {
@@ -3216,7 +3262,9 @@ static void write_nonleaf_node (FTLOADER bl, struct dbout *out, int64_t blocknum
         ft_loader_set_panic(bl, result, true, 0, nullptr, nullptr);
 }
 
-static int write_nonleaves (FTLOADER bl, FIDX pivots_fidx, struct dbout *out, struct subtrees_info *sts, const DESCRIPTOR descriptor, uint32_t target_nodesize, uint32_t target_basementnodesize, enum toku_compression_method target_compression_method) {
+static int write_nonleaves (FTLOADER bl, FIDX pivots_fidx, struct dbout *out,
+                            struct subtrees_info *sts,
+                            const DESCRIPTOR descriptor) {
     int result = 0;
     int height = 1;
 
@@ -3264,7 +3312,8 @@ static int write_nonleaves (FTLOADER bl, FIDX pivots_fidx, struct dbout *out, st
                 result = r;
                 break;
             } else {
-                write_nonleaf_node(bl, out, blocknum_of_new_node, n_per_block, pivots, subtree_info, height, descriptor, target_nodesize, target_basementnodesize, target_compression_method); // frees all the data structures that go into making the node.
+                write_nonleaf_node(bl, out, blocknum_of_new_node, n_per_block,
+                                   pivots, subtree_info, height, descriptor); // frees all the data structures that go into making the node.
                 n_subtrees_used += n_per_block;
             }
         }
@@ -3287,7 +3336,8 @@ static int write_nonleaves (FTLOADER bl, FIDX pivots_fidx, struct dbout *out, st
                 if (r) {
                     result = r;
                 } else {
-                    write_nonleaf_node(bl, out, blocknum_of_new_node, n_first, pivots, subtree_info, height, descriptor, target_nodesize, target_basementnodesize, target_compression_method);
+                    write_nonleaf_node(bl, out, blocknum_of_new_node, n_first,
+                                       pivots, subtree_info, height, descriptor);
                     n_blocks_left -= n_first;
                     n_subtrees_used += n_first;
                 }
@@ -3306,7 +3356,8 @@ static int write_nonleaves (FTLOADER bl, FIDX pivots_fidx, struct dbout *out, st
             if (r) {
                 result = r;
             } else {
-                write_nonleaf_node(bl, out, blocknum_of_new_node, n_blocks_left, pivots, subtree_info, height, descriptor, target_nodesize, target_basementnodesize, target_compression_method);
+                write_nonleaf_node(bl, out, blocknum_of_new_node, n_blocks_left,
+                                   pivots, subtree_info, height, descriptor);
                 n_subtrees_used += n_blocks_left;
             }
         }

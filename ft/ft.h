@@ -141,7 +141,8 @@ toku_ft_init(
     uint32_t target_nodesize,
     uint32_t target_basementnodesize,
     enum toku_compression_method compression_method,
-    uint32_t fanout
+    uint32_t fanout,
+    uint32_t leaf_rebalance_mode
     );
 
 int toku_dictionary_redirect_abort(FT old_h, FT new_h, TOKUTXN txn) __attribute__ ((warn_unused_result));
@@ -201,6 +202,8 @@ void toku_ft_set_compression_method(FT ft, enum toku_compression_method method);
 void toku_ft_get_compression_method(FT ft, enum toku_compression_method *methodp);
 void toku_ft_set_fanout(FT ft, unsigned int fanout);
 void toku_ft_get_fanout(FT ft, unsigned int *fanout);
+void toku_ft_set_leaf_rebalance_mode(FT ft, unsigned int mode);
+void toku_ft_get_leaf_rebalance_mode(FT ft, unsigned int *mode);
 
 // mark the ft as a blackhole. any message injections will be a no op.
 void toku_ft_set_blackhole(FT_HANDLE ft_handle);

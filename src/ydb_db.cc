@@ -1012,6 +1012,30 @@ autotxn_db_get_last_key(DB* db, YDB_CALLBACK_FUNCTION func, void* extra) {
     return toku_db_destruct_autotxn(txn, r, changed);
 }
 
+static int 
+toku_db_change_leaf_rebalance_mode(DB *db, unsigned int mode) {
+    HANDLE_PANICKED_DB(db);
+    if (!db_opened(db)) return EINVAL;
+    toku_ft_handle_set_leaf_rebalance_mode(db->i->ft_handle, mode);
+    return 0;
+}
+
+static int 
+toku_db_set_leaf_rebalance_mode(DB *db, unsigned int mode) {
+    HANDLE_PANICKED_DB(db);
+    if (db_opened(db)) return EINVAL;
+    toku_ft_handle_set_leaf_rebalance_mode(db->i->ft_handle, mode);
+    return 0;
+}
+
+static int 
+toku_db_get_leaf_rebalance_mode(DB *db, unsigned int *mode) {
+    HANDLE_PANICKED_DB(db);
+    toku_ft_handle_get_leaf_rebalance_mode(db->i->ft_handle, mode);
+    return 0;
+}
+
+
 static int
 toku_db_get_fragmentation(DB * db, TOKU_DB_FRAGMENTATION report) {
     HANDLE_PANICKED_DB(db);
@@ -1151,6 +1175,9 @@ toku_db_create(DB ** db, DB_ENV * env, uint32_t flags) {
     USDB(dbt_pos_infty);
     USDB(dbt_neg_infty);
     USDB(get_fragmentation);
+    USDB(set_leaf_rebalance_mode);
+    USDB(get_leaf_rebalance_mode);
+    USDB(change_leaf_rebalance_mode);
 #undef USDB
     result->get_indexer = db_get_indexer;
     result->del = autotxn_db_del;

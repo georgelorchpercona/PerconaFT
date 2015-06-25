@@ -352,7 +352,8 @@ test_serialize_nonleaf(void) {
                  4*1024*1024,
                  128*1024,
                  TOKU_DEFAULT_COMPRESSION_METHOD,
-                 16);
+                 16,
+                 0);
     ft_h->cmp.create(string_key_cmp, nullptr);
     ft->ft = ft_h;
     
@@ -433,7 +434,8 @@ test_serialize_leaf(void) {
                  4*1024*1024,
                  128*1024,
                  TOKU_DEFAULT_COMPRESSION_METHOD,
-                 16);
+                 16,
+                 0);
     ft->ft = ft_h;
     
     ft_h->blocktable.create();
