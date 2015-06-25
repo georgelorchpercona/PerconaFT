@@ -118,6 +118,7 @@ struct ft_search;
 enum { FT_DEFAULT_FANOUT = 16 };
 enum { FT_DEFAULT_NODE_SIZE = 4 * 1024 * 1024 };
 enum { FT_DEFAULT_BASEMENT_NODE_SIZE = 128 * 1024 };
+enum { FT_DEFAULT_LEAF_REBALANCE_MODE = 0 };
 
 // We optimize for a sequential insert pattern if 100 consecutive injections
 // happen into the rightmost leaf node due to promotion.
@@ -176,6 +177,7 @@ struct ft_header {
     unsigned int basementnodesize;
     enum toku_compression_method compression_method;
     unsigned int fanout;
+    unsigned int leaf_rebalance_mode;
 
     // Current Minimum MSN to be used when upgrading pre-MSN FT's.
     // This is decremented from our currnt MIN_MSN so as not to clash
@@ -278,6 +280,7 @@ struct ft_options {
     unsigned int basementnodesize;
     enum toku_compression_method compression_method;
     unsigned int fanout;
+    unsigned int leaf_rebalance_mode;
     unsigned int flags;
     uint8_t memcmp_magic;
     ft_compare_func compare_fun;

@@ -678,10 +678,9 @@ serialize_and_compress_sb_node_info(FTNODE node, struct sub_block *sb,
     st->compress_time += t2 - t1;
 }
 
-int toku_serialize_ftnode_to_memory(FTNODE node,
+int toku_serialize_ftnode_to_memory(FT ft,
+                                    FTNODE node,
                                     FTNODE_DISK_DATA* ndd,
-                                    unsigned int basementnodesize,
-                                    enum toku_compression_method compression_method,
                                     bool do_rebalancing,
                                     bool in_parallel, // for loader is true, for toku_ftnode_flush_callback, is false
                             /*out*/ size_t *n_bytes_to_write,
@@ -697,9 +696,10 @@ int toku_serialize_ftnode_to_memory(FTNODE node,
     toku_ftnode_assert_fully_in_memory(node);
 
     if (do_rebalancing && node->height == 0) {
-        toku_ftnode_leaf_rebalance(node, basementnodesize);
+        toku_ftnode_leaf_rebalance(ft, node);
     }
     const int npartitions = node->n_children;
+    enum toku_compression_method compression_method = ft->h->compression_method;
 
     // Each partition represents a compressed sub block
     // For internal nodes, a sub block is a message buffer
@@ -847,10 +847,9 @@ toku_serialize_ftnode_to (int fd, BLOCKNUM blocknum, FTNODE node, FTNODE_DISK_DA
     // alternatively, we could have made in_parallel a parameter
     // for toku_serialize_ftnode_to, but instead we did this.
     int r = toku_serialize_ftnode_to_memory(
+        ft,
         node,
         ndd,
-        ft->h->basementnodesize,
-        ft->h->compression_method,
         do_rebalancing,
         toku_drd_unsafe_fetch(&toku_serialize_in_parallel),
         &n_to_write,

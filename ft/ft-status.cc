@@ -365,6 +365,8 @@ void FT_STATUS_S::init() {
 
     FT_STATUS_INIT(FT_CURSOR_SKIP_DELETED_LEAF_ENTRY,         CURSOR_SKIP_DELETED_LEAF_ENTRY,       PARCOUNT, "cursor skipped deleted leaf entries");
 
+    FT_STATUS_INIT(FT_LEAF_NODE_REBALANCES_TOTAL,             LEAF_NODE_REBALANCES_TOTAL,           PARCOUNT, "leaf nodes analysed for rebalance");
+    FT_STATUS_INIT(FT_LEAF_NODE_REBALANCES_SKIPPED,           LEAF_NODE_REBALANCES_SKIPPED,         PARCOUNT, "leaf nodes that skipped rebalance");
     m_initialized = true;
 #undef FT_STATUS_INIT
 }

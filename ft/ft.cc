@@ -429,6 +429,7 @@ ft_header_create(FT_OPTIONS options, BLOCKNUM root_blocknum, TXNID root_xid_that
         .basementnodesize = options->basementnodesize,
         .compression_method = options->compression_method,
         .fanout = options->fanout,
+        .leaf_rebalance_mode = options->leaf_rebalance_mode,
         .highest_unused_msn_for_upgrade = { .msn = (MIN_MSN.msn - 1) },
         .max_msn_in_ft = ZERO_MSN,
         .time_of_last_optimize_begin = 0,
@@ -598,7 +599,8 @@ toku_ft_init(FT ft,
              uint32_t target_nodesize,
              uint32_t target_basementnodesize,
              enum toku_compression_method compression_method,
-             uint32_t fanout
+             uint32_t fanout,
+             uint32_t leaf_rebalance_mode
              )
 {
     memset(ft, 0, sizeof *ft);
@@ -607,6 +609,7 @@ toku_ft_init(FT ft,
         .basementnodesize = target_basementnodesize,
         .compression_method = compression_method,
         .fanout = fanout,
+        .leaf_rebalance_mode = leaf_rebalance_mode,
         .flags = 0,
         .memcmp_magic = 0,
         .compare_fun = NULL,
@@ -629,6 +632,7 @@ ft_handle_open_for_redirect(FT_HANDLE *new_ftp, const char *fname_in_env, TOKUTX
     toku_ft_handle_set_basementnodesize(ft_handle, old_ft->h->basementnodesize);
     toku_ft_handle_set_compression_method(ft_handle, old_ft->h->compression_method);
     toku_ft_handle_set_fanout(ft_handle, old_ft->h->fanout);
+    toku_ft_handle_set_fanout(ft_handle, old_ft->h->leaf_rebalance_mode);
     CACHETABLE ct = toku_cachefile_get_cachetable(old_ft->cf);
     int r = toku_ft_handle_open_with_dict_id(ft_handle, fname_in_env, 0, 0, ct, txn, old_ft->dict_id);
     if (r != 0) {
@@ -1018,6 +1022,20 @@ void toku_ft_get_fanout(FT ft, unsigned int *fanout) {
     *fanout = ft->h->fanout;
     toku_ft_unlock(ft);
 }
+
+void toku_ft_set_leaf_rebalance_mode(FT ft, unsigned int mode) {
+    toku_ft_lock(ft);
+    ft->h->leaf_rebalance_mode = mode;
+    ft->h->dirty = 1;
+    toku_ft_unlock(ft);
+}
+
+void toku_ft_get_leaf_rebalance_mode(FT ft, unsigned int *mode) {
+    toku_ft_lock(ft);
+    *mode = ft->h->leaf_rebalance_mode;
+    toku_ft_unlock(ft);
+}
+
 
 // mark the ft as a blackhole. any message injections will be a no op.
 void toku_ft_set_blackhole(FT_HANDLE ft_handle) {

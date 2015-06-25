@@ -234,6 +234,7 @@ static void dump_header(FT ft) {
     printf(" checkpoint_count=%" PRId64 "\n", ft->h->checkpoint_count);
     printf(" checkpoint_lsn=%" PRId64 "\n", ft->h->checkpoint_lsn.lsn);
     printf(" nodesize=%u\n", ft->h->nodesize);
+    printf(" leaf_rebalance_mode=%u\n", ft->h->leaf_rebalance_mode);
     printf(" basementnodesize=%u\n", ft->h->basementnodesize);
     printf(" compression_method=%u\n", (unsigned) ft->h->compression_method);
     printf(" unnamed_root=%" PRId64 "\n", ft->h->root_blocknum.b);
