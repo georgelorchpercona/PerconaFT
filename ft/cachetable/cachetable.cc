@@ -193,6 +193,7 @@ toku_cachetable_get_status(CACHETABLE ct, CACHETABLE_STATUS statp) {
     CT_STATUS_VAL(CT_CLEANER_EXECUTIONS)     = cleaner_executions;
     CT_STATUS_VAL(CT_CLEANER_PERIOD)         = toku_get_cleaner_period_unlocked(ct);
     CT_STATUS_VAL(CT_CLEANER_ITERATIONS)     = toku_get_cleaner_iterations_unlocked(ct);
+    CT_STATUS_VAL(CT_CLEANER_WINDOW)         = toku_get_cleaner_window_unlocked(ct);
     ct->ev.fill_engine_status();
     *statp = ct_status;
 }
@@ -256,6 +257,19 @@ uint32_t toku_get_cleaner_iterations_unlocked (CACHETABLE ct) {
     return ct->cl.get_iterations();
 }
 
+void toku_set_cleaner_window (CACHETABLE ct, uint32_t new_window) {
+    ct->cl.set_window(new_window);
+}
+
+uint32_t toku_get_cleaner_window (CACHETABLE ct) {
+    return ct->cl.get_window();
+}
+
+uint32_t toku_get_cleaner_window_unlocked (CACHETABLE ct) {
+    return ct->cl.get_window();
+}
+
+
 // reserve 25% as "unreservable".  The loader cannot have it.
 #define unreservable_memory(size) ((size)/4)
 
@@ -299,7 +313,9 @@ int toku_cachetable_create(CACHETABLE *ct_result, long size_limit, LSN UU(initia
         result = r;
         goto cleanup;
     }
-    r = ct->cl.init(1, &ct->list, ct); // by default, start with one iteration
+    r = ct->cl.init(1, 8, &ct->list, ct); // by default,
+                                          // start with one iteration
+                                          // and a window of eight
     if (r != 0) {
         result = r;
         goto cleanup;
@@ -2964,8 +2980,6 @@ cleaner_thread_rate_pair(PAIR p)
     return p->attr.cache_pressure_size;
 }
 
-static int const CLEANER_N_TO_CHECK = 8;
-
 int toku_cleaner_thread_for_test (CACHETABLE ct) {
     return ct->cl.run_cleaner();
 }
@@ -2982,7 +2996,8 @@ int toku_cleaner_thread (void *cleaner_v) {
 //
 ENSURE_POD(cleaner);
 
-int cleaner::init(uint32_t _cleaner_iterations, pair_list* _pl, CACHETABLE _ct) {
+int cleaner::init(uint32_t _cleaner_iterations, uint32_t _cleaner_window,
+                  pair_list* _pl, CACHETABLE _ct) {
     // default is no cleaner, for now
     m_cleaner_cron_init = false;
     int r = toku_minicron_setup(&m_cleaner_cron, 0, toku_cleaner_thread, this);
@@ -2991,6 +3006,7 @@ int cleaner::init(uint32_t _cleaner_iterations, pair_list* _pl, CACHETABLE _ct) 
     }
     TOKU_VALGRIND_HG_DISABLE_CHECKING(&m_cleaner_iterations, sizeof m_cleaner_iterations);
     m_cleaner_iterations = _cleaner_iterations;
+    m_cleaner_window = _cleaner_window;
     m_pl = _pl;
     m_ct = _ct;
     m_cleaner_init = true;
@@ -3028,6 +3044,13 @@ void cleaner::set_period(uint32_t new_period) {
     toku_minicron_change_period(&m_cleaner_cron, new_period*1000);
 }
 
+uint32_t cleaner::get_window(void) {
+    return m_cleaner_window;
+}
+
+void cleaner::set_window(uint32_t new_window) {
+    m_cleaner_window = new_window;
+}
 // Effect:  runs a cleaner.
 //
 // We look through some number of nodes, the first N that we see which are
@@ -3043,11 +3066,12 @@ int cleaner::run_cleaner(void) {
 
     int r;
     uint32_t num_iterations = this->get_iterations();
+    uint32_t window_size = this->get_window();
     for (uint32_t i = 0; i < num_iterations; ++i) {
         cleaner_executions++;
         m_pl->read_list_lock();
         PAIR best_pair = NULL;
-        int n_seen = 0;
+        uint32_t n_seen = 0;
         long best_score = 0;
         const PAIR first_pair = m_pl->m_cleaner_head;
         if (first_pair == NULL) {
@@ -3108,7 +3132,7 @@ int cleaner::run_cleaner(void) {
             }
             // Advance the cleaner head.
             m_pl->m_cleaner_head = m_pl->m_cleaner_head->clock_next;
-        } while (m_pl->m_cleaner_head != first_pair && n_seen < CLEANER_N_TO_CHECK);
+        } while (m_pl->m_cleaner_head != first_pair && n_seen < window_size);
         m_pl->read_list_unlock();
 
         //
