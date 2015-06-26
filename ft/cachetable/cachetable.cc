@@ -3101,9 +3101,27 @@ int cleaner::run_cleaner(void) {
                         pair_unlock(best_pair);
                     }
                     best_pair = m_pl->m_cleaner_head;
-                }
-                else {
-                    pair_unlock(m_pl->m_cleaner_head);
+                } else {
+                    // let's see if we can help out the checkpointer
+                    if (m_pl->m_cleaner_head->checkpoint_pending) {
+                        m_pl->m_cleaner_head->value_rwlock.write_lock(true);
+                        pair_unlock(m_pl->m_cleaner_head);
+
+                        // check the checkpoint_pending bit for real
+                        m_pl->read_pending_cheap_lock();
+                        bool checkpoint_pending = m_pl->m_cleaner_head->checkpoint_pending;
+                        m_pl->m_cleaner_head->checkpoint_pending = false;
+                        m_pl->read_pending_cheap_unlock();
+                        if (checkpoint_pending) {
+                            write_locked_pair_for_checkpoint(m_ct, m_pl->m_cleaner_head, true);
+                            CT_STATUS_VAL(CT_CLEANER_NODES_CHECKPOINTED)++;
+                        }
+                        pair_lock(m_pl->m_cleaner_head);
+                        m_pl->m_cleaner_head->value_rwlock.write_unlock();
+                        pair_unlock(m_pl->m_cleaner_head);
+                    } else {
+                        pair_unlock(m_pl->m_cleaner_head);
+                    }
                 }
             }
             // Advance the cleaner head.
@@ -3140,6 +3158,7 @@ int cleaner::run_cleaner(void) {
             m_pl->read_pending_cheap_unlock();
             if (checkpoint_pending) {
                 write_locked_pair_for_checkpoint(m_ct, best_pair, true);
+                CT_STATUS_VAL(CT_CLEANER_NODES_CHECKPOINTED)++;
             }
 
             bool cleaner_callback_called = false;
