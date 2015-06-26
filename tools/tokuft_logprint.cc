@@ -90,37 +90,38 @@ PATENT RIGHTS GRANT:
 #ident "The technology is licensed by the Massachusetts Institute of Technology, Rutgers State University of New Jersey, and the Research Foundation of State University of New York at Stony Brook under United States of America Serial No. 11/760379 and to the patents and/or patent applications resulting from it."
 
 /* Dump the log from stdin to stdout. */
-
+#include "ft/ft.h"
 #include "ft/log_header.h"
 #include "ft/logger/logger.h"
 
-static void newmain (int count) {
-    int i;
-    uint32_t version;
-    int r = toku_read_and_print_logmagic(stdin, &version);
-    for (i=0; i!=count; i++) {
-	r = toku_logprint_one_record(stdout, stdin);
-	if (r==EOF) break;
-	if (r!=0) {
-	    fflush(stdout);
-	    fprintf(stderr, "Problem in log err=%d\n", r);
-	    exit(1);
-	}
-    }
-}
+using namespace std;
 
-int main (int argc, char *const argv[]) {
+int main (int argc, const char *const argv[]) {
+    int r = toku_ft_layer_init();
+    assert_zero(r);
+
     int count=-1;
     while (argc>1) {
-	if (strcmp(argv[1], "--oldcode")==0) {
-	    fprintf(stderr,"Old code no longer works.\n");
-	    exit(1);
-	} else {
-	    count = atoi(argv[1]);
-	}
-	argc--; argv++;
+        if (strcmp(argv[1], "--oldcode")==0) {
+            fprintf(stderr,"Old code no longer works.\n");
+            exit(1);
+        } else {
+            count = atoi(argv[1]);
+        }
+        argc--; argv++;
     }
-    newmain(count);
+    int i;
+    uint32_t version;
+    r = toku_read_and_print_logmagic(stdin, &version);
+    for (i=0; i!=count; i++) {
+        r = toku_logprint_one_record(stdout, stdin);
+        if (r==EOF) break;
+        if (r!=0) {
+            fflush(stdout);
+            fprintf(stderr, "Problem in log err=%d\n", r);
+            exit(1);
+        }
+    }
+    toku_ft_layer_destroy();
     return 0;
 }
-
