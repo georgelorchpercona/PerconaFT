@@ -127,6 +127,8 @@ void toku_ft_handle_get_compression_method(FT_HANDLE, enum toku_compression_meth
 void toku_ft_handle_set_fanout(FT_HANDLE, unsigned int fanout);
 void toku_ft_handle_get_fanout(FT_HANDLE, unsigned int *fanout);
 int toku_ft_handle_set_memcmp_magic(FT_HANDLE, uint8_t magic);
+void toku_ft_handle_set_leaf_rebalance_mode(FT_HANDLE, unsigned int mode);
+void toku_ft_handle_get_leaf_rebalance_mode(FT_HANDLE, unsigned int *mode);
 
 void toku_ft_set_bt_compare(FT_HANDLE ft_handle, ft_compare_func cmp_func);
 const toku::comparator &toku_ft_get_comparator(FT_HANDLE ft_handle);

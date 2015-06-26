@@ -668,7 +668,7 @@ void toku_ftnode_clone_callback(
         // set header stats, must be done before rebalancing
         toku_ftnode_update_disk_stats(node, ft, for_checkpoint);
         // rebalance the leaf node
-        toku_ftnode_leaf_rebalance(node, ft->h->basementnodesize);
+        toku_ftnode_leaf_rebalance(ft, node);
     }
 
     cloned_node->oldest_referenced_xid_known = node->oldest_referenced_xid_known;
@@ -2591,6 +2591,7 @@ int toku_open_ft_handle (const char *fname, int is_create, FT_HANDLE *ft_handle_
     toku_ft_handle_set_basementnodesize(ft_handle, basementnodesize);
     toku_ft_handle_set_compression_method(ft_handle, compression_method);
     toku_ft_handle_set_fanout(ft_handle, 16);
+    toku_ft_handle_set_leaf_rebalance_mode(ft_handle, 0);
     toku_ft_set_bt_compare(ft_handle, compare_fun);
 
     int r = toku_ft_handle_open(ft_handle, fname, is_create, only_create, cachetable, txn);
@@ -2778,6 +2779,27 @@ void toku_ft_change_descriptor(
     }
 }
 
+void
+toku_ft_handle_set_leaf_rebalance_mode(FT_HANDLE ft_handle, unsigned int mode)
+{
+    if (ft_handle->ft) {
+        toku_ft_set_leaf_rebalance_mode(ft_handle->ft, mode);
+    }
+    else {
+        ft_handle->options.leaf_rebalance_mode = mode;
+    }
+}
+
+void
+toku_ft_handle_get_leaf_rebalance_mode(FT_HANDLE ft_handle, unsigned int *mode)
+{
+    if (ft_handle->ft) {
+        toku_ft_get_leaf_rebalance_mode(ft_handle->ft, mode);
+    }
+    else {
+        *mode = ft_handle->options.leaf_rebalance_mode;
+    }
+}
 static void
 toku_ft_handle_inherit_options(FT_HANDLE t, FT ft) {
     struct ft_options options = {
@@ -2785,6 +2807,7 @@ toku_ft_handle_inherit_options(FT_HANDLE t, FT ft) {
         .basementnodesize = ft->h->basementnodesize,
         .compression_method = ft->h->compression_method,
         .fanout = ft->h->fanout,
+        .leaf_rebalance_mode = ft->h->leaf_rebalance_mode,
         .flags = ft->h->flags,
         .memcmp_magic = ft->cmp.get_memcmp_magic(),
         .compare_fun = ft->cmp.get_compare_func(),
@@ -3147,6 +3170,7 @@ void toku_ft_handle_create(FT_HANDLE *ft_handle_ptr) {
     ft_handle->options.basementnodesize = FT_DEFAULT_BASEMENT_NODE_SIZE;
     ft_handle->options.compression_method = TOKU_DEFAULT_COMPRESSION_METHOD;
     ft_handle->options.fanout = FT_DEFAULT_FANOUT;
+    ft_handle->options.leaf_rebalance_mode = FT_DEFAULT_LEAF_REBALANCE_MODE;
     ft_handle->options.compare_fun = toku_builtin_compare_fun;
     ft_handle->options.update_fun = NULL;
     *ft_handle_ptr = ft_handle;

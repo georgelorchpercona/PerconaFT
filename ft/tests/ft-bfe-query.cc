@@ -418,7 +418,8 @@ test_prefetching(void) {
                  4*1024*1024,
                  128*1024,
                  TOKU_DEFAULT_COMPRESSION_METHOD,
-                 16);
+                 16,
+                 0);
     ft_h->cmp.create(int64_key_cmp, nullptr);
     ft->ft = ft_h;
     ft_h->blocktable.create();

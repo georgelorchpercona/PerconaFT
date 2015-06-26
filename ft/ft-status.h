@@ -384,6 +384,8 @@ public:
         FT_PRO_RIGHTMOST_LEAF_SHORTCUT_FAIL_POS,
         FT_PRO_RIGHTMOST_LEAF_SHORTCUT_FAIL_REACTIVE,
         FT_CURSOR_SKIP_DELETED_LEAF_ENTRY, // how many deleted leaf entries were skipped by a cursor
+        FT_LEAF_NODE_REBALANCES_TOTAL,
+        FT_LEAF_NODE_REBALANCES_SKIPPED,
         FT_STATUS_NUM_ROWS
     };
 

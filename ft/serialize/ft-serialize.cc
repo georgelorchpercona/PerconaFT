@@ -371,9 +371,12 @@ int deserialize_ft_versioned(int fd, struct rbuf *rb, FT *ftp, uint32_t version)
     }
 
     unsigned fanout;
+    unsigned leaf_rebalance_mode;
     fanout = FT_DEFAULT_FANOUT;
+    leaf_rebalance_mode = FT_DEFAULT_LEAF_REBALANCE_MODE;
     if (ft->layout_version_read_from_disk >= FT_LAYOUT_VERSION_28) {
         fanout = rbuf_int(rb);
+        leaf_rebalance_mode = rbuf_int(rb);
     }
 
     (void) rbuf_int(rb); //Read in checksum and ignore (already verified).
@@ -403,6 +406,7 @@ int deserialize_ft_versioned(int fd, struct rbuf *rb, FT *ftp, uint32_t version)
             .basementnodesize = basementnodesize,
             .compression_method = compression_method,
             .fanout = fanout,
+            .leaf_rebalance_mode =leaf_rebalance_mode, 
             .highest_unused_msn_for_upgrade = highest_unused_msn_for_upgrade,
             .max_msn_in_ft = max_msn_in_ft,
             .time_of_last_optimize_begin = time_of_last_optimize_begin,
@@ -463,6 +467,7 @@ serialize_ft_min_size (uint32_t version) {
     switch(version) {
     case FT_LAYOUT_VERSION_28:
         size += sizeof(uint32_t); // fanout in ft
+        size += sizeof(uint32_t); // leaf_rebalance_mode in ft
     case FT_LAYOUT_VERSION_27:
     case FT_LAYOUT_VERSION_26:
     case FT_LAYOUT_VERSION_25:
@@ -807,6 +812,7 @@ void toku_serialize_ft_to_wbuf (
     wbuf_MSN(wbuf, h->highest_unused_msn_for_upgrade);
     wbuf_MSN(wbuf, h->max_msn_in_ft);
     wbuf_int(wbuf, h->fanout);
+    wbuf_int(wbuf, h->leaf_rebalance_mode);
     uint32_t checksum = toku_x1764_finish(&wbuf->checksum);
     wbuf_int(wbuf, checksum);
     lazy_assert(wbuf->ndone == wbuf->size);
