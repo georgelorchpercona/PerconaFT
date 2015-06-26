@@ -177,6 +177,8 @@ void CACHETABLE_STATUS_S::init() {
     CT_STATUS_INIT(CT_CLEANER_PERIOD,           CACHETABLE_CLEANER_PERIOD,              UINT64, "cleaner period");
     CT_STATUS_INIT(CT_CLEANER_ITERATIONS,       CACHETABLE_CLEANER_ITERATIONS,          UINT64, "cleaner iterations");
     CT_STATUS_INIT(CT_CLEANER_WINDOW,           CACHETABLE_CLEANER_WINDOW,              UINT64, "cleaner window");
+    CT_STATUS_INIT(CT_CLEANER_NODES_CHECKPOINTED,CACHETABLE_CLEANER_NODES_CHECKPOINTED, UINT64, "nodes cloned and dispatched for checkpoint by te cleaner");
+
     CT_STATUS_INIT(CT_WAIT_PRESSURE_COUNT,      CACHETABLE_WAIT_PRESSURE_COUNT,         UINT64, "number of waits on cache pressure");
     CT_STATUS_INIT(CT_WAIT_PRESSURE_TIME,       CACHETABLE_WAIT_PRESSURE_TIME,          UINT64, "time waiting on cache pressure");
     CT_STATUS_INIT(CT_LONG_WAIT_PRESSURE_COUNT, CACHETABLE_LONG_WAIT_PRESSURE_COUNT,    UINT64, "number of long waits on cache pressure");

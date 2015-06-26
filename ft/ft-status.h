@@ -207,6 +207,7 @@ public:
         CT_CLEANER_PERIOD,
         CT_CLEANER_ITERATIONS,     // number of times the cleaner thread runs the cleaner per period
         CT_CLEANER_WINDOW,
+        CT_CLEANER_NODES_CHECKPOINTED, // number of nodes the cleaner checkpointed
         CT_WAIT_PRESSURE_COUNT,
         CT_WAIT_PRESSURE_TIME,
         CT_LONG_WAIT_PRESSURE_COUNT,
