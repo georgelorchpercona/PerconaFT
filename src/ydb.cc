@@ -1585,6 +1585,18 @@ env_cleaner_set_iterations(DB_ENV * env, uint32_t iterations) {
 }
 
 static int
+env_cleaner_set_window(DB_ENV * env, uint32_t window) {
+    HANDLE_PANICKED_ENV(env);
+    int r = 0;
+    if (!env_opened(env)) {
+        r = EINVAL;
+    } else {
+        toku_set_cleaner_window(env->i->cachetable, window);
+    }
+    return r;
+}
+
+static int
 env_create_loader(DB_ENV *env,
                   DB_TXN *txn,
                   DB_LOADER **blp,
@@ -1625,6 +1637,16 @@ env_cleaner_get_iterations(DB_ENV * env, uint32_t *iterations) {
     if (!env_opened(env)) r = EINVAL;
     else 
         *iterations = toku_get_cleaner_iterations(env->i->cachetable);
+    return r;
+}
+
+static int
+env_cleaner_get_window(DB_ENV * env, uint32_t *window) {
+    HANDLE_PANICKED_ENV(env);
+    int r = 0;
+    if (!env_opened(env)) r = EINVAL;
+    else 
+        *window = toku_get_cleaner_window(env->i->cachetable);
     return r;
 }
 
@@ -2604,6 +2626,8 @@ toku_env_create(DB_ENV ** envp, uint32_t flags) {
     USENV(cleaner_get_period);
     USENV(cleaner_set_iterations);
     USENV(cleaner_get_iterations);
+    USENV(cleaner_set_window);
+    USENV(cleaner_get_window);
     USENV(set_cachesize);
 #if DB_VERSION_MAJOR == 4 && DB_VERSION_MINOR >= 3
     USENV(get_cachesize);

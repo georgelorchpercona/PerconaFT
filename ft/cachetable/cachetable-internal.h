@@ -614,12 +614,15 @@ private:
 //
 class cleaner {
 public:
-    int init(uint32_t cleaner_iterations, pair_list* _pl, CACHETABLE _ct);
+    int init(uint32_t cleaner_iterations, uint32_t cleaner_window,
+             pair_list* _pl, CACHETABLE _ct);
     void destroy(void);
     uint32_t get_iterations(void);
     void set_iterations(uint32_t new_iterations);
     uint32_t get_period_unlocked(void);
     void set_period(uint32_t new_period);
+    uint32_t get_window(void);
+    void set_window(uint32_t new_window);
     int run_cleaner(void);
     
 private:
@@ -631,6 +634,7 @@ private:
                                   // minimum period of 1s so if you want
                                   // more frequent cleaner runs you must
                                   // use this)
+    uint32_t m_cleaner_window;
     bool m_cleaner_cron_init;
     bool m_cleaner_init;
 };
