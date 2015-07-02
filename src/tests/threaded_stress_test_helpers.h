@@ -2763,10 +2763,12 @@ static inline void parse_stress_test_args (int argc, char *const argv[], struct 
             args->compression_method = TOKU_LZMA_METHOD;
         } else if (strcmp(compression_method_s, "snappy") == 0) {
             args->compression_method = TOKU_SNAPPY_METHOD;
+        } else if (strcmp(compression_method_s, "lzham") == 0) {
+            args->compression_method = TOKU_LZHAM_METHOD;
         } else if (strcmp(compression_method_s, "none") == 0) {
             args->compression_method = TOKU_NO_COMPRESSION;
         } else {
-            fprintf(stderr, "valid values for --compression_method are \"quicklz\", \"zlib\", \"lzma\", \"snappy\", and \"none\"\n");
+            fprintf(stderr, "valid values for --compression_method are \"quicklz\", \"zlib\", \"lzma\", \"snappy\", \"lzham\", and \"none\"\n");
             do_usage(argv0, num_arg_types, arg_types);
             exit(EINVAL);
         }

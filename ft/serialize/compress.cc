@@ -94,6 +94,7 @@ PATENT RIGHTS GRANT:
 #include <zlib.h>
 #include <lzma.h>
 #include <snappy.h>
+#include <lzham.h>
 
 #include "compress.h"
 #include "memory.h"
@@ -123,7 +124,7 @@ size_t toku_compress_bound (enum toku_compression_method a, size_t size)
     case TOKU_NO_COMPRESSION:
         return size + 1;
     case TOKU_LZMA_METHOD:
-	return 1+lzma_stream_buffer_bound(size); // We need one extra for the rfc1950-style header byte (bits -03 are TOKU_LZMA_METHOD (1), bits 4-7 are the compression level)
+        return 1+lzma_stream_buffer_bound(size); // We need one extra for the rfc1950-style header byte (bits -03 are TOKU_LZMA_METHOD (1), bits 4-7 are the compression level)
     case TOKU_QUICKLZ_METHOD:
         return size+400 + 1;  // quicklz manual says 400 bytes is enough.  We need one more byte for the rfc1950-style header byte.  bits 0-3 are 9, bits 4-7 are the QLZ_COMPRESSION_LEVEL.
     case TOKU_ZLIB_METHOD:
@@ -132,6 +133,8 @@ size_t toku_compress_bound (enum toku_compression_method a, size_t size)
         return 2+deflateBound(nullptr, size); // We need one extra for the rfc1950-style header byte, and one extra to store windowBits (a bit over cautious about future upgrades maybe).
     case TOKU_SNAPPY_METHOD:
         return (1 + snappy::MaxCompressedLength(size));
+    case TOKU_LZHAM_METHOD:
+        return 1+lzham_z_compressBound(size);
     default:
         break;
     }
@@ -228,6 +231,14 @@ void toku_compress (enum toku_compression_method a,
         dest[0] = TOKU_SNAPPY_METHOD;
         return;
     }
+    case TOKU_LZHAM_METHOD: {
+        const int lzham_compression_level = 5;
+        int r = lzham_z_compress2((unsigned char*)dest + 1, destLen, source, sourceLen, lzham_compression_level);
+        assert(r == Z_OK);
+        *destLen += 1;
+        dest[0] = TOKU_LZHAM_METHOD;
+        return;
+    }
     default:
         break;
     }
@@ -301,6 +312,13 @@ void toku_decompress (Bytef       *dest,   uLongf destLen,
     case TOKU_SNAPPY_METHOD: {
         bool r = snappy::RawUncompress((char*)source + 1, sourceLen - 1, (char*)dest);
         assert(r);
+        return;
+    }
+    case TOKU_LZHAM_METHOD: {
+        uLongf actual_destlen = destLen;
+        int r = lzham_z_uncompress(dest, &actual_destlen, (unsigned char*)source + 1, sourceLen);
+        assert(r == Z_OK);
+        assert(actual_destlen == destLen);
         return;
     }
     }

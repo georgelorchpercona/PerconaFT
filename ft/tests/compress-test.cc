@@ -1,6 +1,6 @@
 /* -*- mode: C++; c-basic-offset: 4; indent-tabs-mode: nil -*- */
 // vim: ft=cpp:expandtab:ts=8:sw=4:softtabstop=4:
-// Test zlib, lzma, quicklz, and snappy.
+// Test zlib, lzma, quicklz, snappy and lzham.
 // Compare to compress-test which tests the toku compression (which is a composite of quicklz and zlib).
 /*
 COPYING CONDITIONS NOTICE:
@@ -183,6 +183,15 @@ static void test_compress_methods () {
     test_compress(TOKU_SNAPPY_METHOD, &compress_size, &uncompress_size);
     gettimeofday(&end, NULL);
     printf("TOKU_SNAPPY_METHOD Time=%.6fs, Ratio=%.2f[%d/%d]\n",
+            tdiff(&start, &end),
+            (float)compress_size / (float)uncompress_size, (int)compress_size, (int)uncompress_size);
+
+    compress_size = 0;
+    uncompress_size = 0;
+    gettimeofday(&start, NULL);
+    test_compress(TOKU_LZHAM_METHOD, &compress_size, &uncompress_size);
+    gettimeofday(&end, NULL);
+    printf("TOKU_LZHAM_METHOD Time=%.6fs, Ratio=%.2f[%d/%d]\n",
             tdiff(&start, &end),
             (float)compress_size / (float)uncompress_size, (int)compress_size, (int)uncompress_size);
 }

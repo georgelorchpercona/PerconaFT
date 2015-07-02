@@ -137,3 +137,35 @@ add_library(snappy STATIC IMPORTED)
 set_target_properties(snappy PROPERTIES IMPORTED_LOCATION
   "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/snappy/lib/libsnappy.a")
 add_dependencies(snappy build_snappy)
+
+
+
+## add lzham with an external project
+set(LZHAM_SOURCE_DIR "${TokuDB_SOURCE_DIR}/third_party/lzham_codec" CACHE FILEPATH "Where to find sources for lzham.")
+if (NOT EXISTS "${LZHAM_SOURCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "Can't find the lzham sources.  Please check them out to ${LZHAM_SOURCE_DIR} or modify LZHAM_SOURCE_DIR.")
+endif ()
+
+FILE(GLOB LZHAM_ALL_FILES ${LZHAM_SOURCE_DIR}/*)
+ExternalProject_Add(build_lzham
+    PREFIX lzham
+    DOWNLOAD_COMMAND
+        cp -a "${LZHAM_ALL_FILES}" "<SOURCE_DIR>/"
+    CMAKE_ARGS 
+        -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR> 
+        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        ${USE_PROJECT_CMAKE_MODULE_PATH}
+)
+FILE(GLOB_RECURSE LZHAM_ALL_FILES_RECURSIVE ${LZHAM_SOURCE_DIR}/*)
+ExternalProject_Add_Step(build_lzham reclone_src # Names of project and custom step
+    COMMENT "(re)cloning lzham source..."     # Text printed when step executes
+    DEPENDERS download configure   # Steps that depend on this step
+    DEPENDS   ${LZHAM_ALL_FILES_RECURSIVE}   # Files on which this step depends
+)
+
+include_directories("${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lzham/include")
+
+add_library(lzham STATIC IMPORTED)
+set_target_properties(lzham PROPERTIES IMPORTED_LOCATION
+  "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lzham/lib/liblzham.a")
+add_dependencies(lzham build_lzham)
