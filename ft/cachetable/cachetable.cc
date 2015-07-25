@@ -581,12 +581,39 @@ uint32_t toku_cachetable_hash (CACHEFILE cachefile, BLOCKNUM key)
     return final(cachefile->hash_id, (uint32_t)(key.b>>32), (uint32_t)key.b);
 }
 
-#define CLOCK_SATURATION 15
-#define CLOCK_INITIAL_COUNT 3
-
-// Requires pair's mutex to be held
+// Requires pair's mutex should NOT be held otherwise may deadlock with 
+// pair list lock.
 static void pair_touch (PAIR p) {
-    p->count = (p->count < CLOCK_SATURATION) ? p->count+1 : CLOCK_SATURATION;
+    pair_list* pl = p->list;
+    pl->write_list_lock();
+
+    // move up only if we are not at the top already
+    // moves this pair up one single node in the LRU list
+    if (p != pl->m_lru_top) {
+        PAIR p_up = p->lru_up; // the place we want to take
+
+        if (p_up->lru_up) {
+            p_up->lru_up->lru_down = p;
+        }
+
+        if (p->lru_down) {
+            p->lru_down->lru_up = p_up;
+        }
+
+        p_up->lru_down = p->lru_down;
+        p->lru_up = p_up->lru_up;
+
+        p->lru_down = p_up;
+        p_up->lru_up = p;
+
+        if (p_up == pl->m_lru_top)
+            pl->m_lru_top = p;
+
+        if (p == pl->m_lru_bottom)
+            pl->m_lru_bottom = p_up;
+
+    }
+    pl->write_list_unlock();
 }
 
 // Remove a pair from the cachetable, requires write list lock to be held and p->mutex to be held
@@ -739,12 +766,14 @@ static void cachetable_evicter(void* extra) {
     bjm_remove_background_job(cf->bjm);
 }
 
+/*
 static void cachetable_partial_eviction(void* extra) {
     PAIR p = (PAIR)extra;
     CACHEFILE cf = p->cachefile;
     p->ev->do_partial_eviction(p);
     bjm_remove_background_job(cf->bjm);
 }
+*/
 
 void toku_cachetable_swap_pair_values(PAIR old_pair, PAIR new_pair) {
     void* old_value = old_pair->value_data;
@@ -789,7 +818,6 @@ void pair_init(PAIR p,
     p->checkpoint_complete_callback = write_callback.checkpoint_complete_callback;
     p->write_extraargs = write_callback.write_extraargs;
 
-    p->count = 0; // <CER> Is zero the correct init value?
     p->refcount = 0;
     p->num_waiting_on_refs = 0;
     toku_cond_init(&p->refcount_wait, NULL);
@@ -805,10 +833,12 @@ void pair_init(PAIR p,
     p->ev = ev;
     p->list = list;
 
-    p->clock_next = p->clock_prev = NULL;
     p->pending_next = p->pending_prev = NULL;
     p->cf_next = p->cf_prev = NULL;
     p->hash_chain = NULL;
+    
+    p->lru_up = p->lru_down = nullptr;
+    p->eviction_pending = false;
 }
 
 // has ct locked on entry
@@ -1443,8 +1473,8 @@ static bool try_pin_pair(
     else {
         p->value_rwlock.read_lock();
     }
-    pair_touch(p);
     pair_unlock(p);
+    pair_touch(p);
 
     bool partial_fetch_required = pf_req_callback(p->value_data,read_extraargs);
     
@@ -1596,12 +1626,10 @@ beginning:
         if (try_again) {
             wait = true;
             goto beginning;
-        }
-        else {
+        } else {
             goto got_value;
         }
-    }
-    else {
+    } else {
         toku::context fetch_ctx(CTX_FULL_FETCH);
 
         ct->list.pair_unlock_by_fullhash(fullhash);
@@ -1669,7 +1697,6 @@ beginning:
         // Pin the pair.
         p->value_rwlock.write_lock(true);
         pair_unlock(p);
-
 
         if (lock_type != PL_READ) {
             ct->list.read_pending_cheap_lock();
@@ -1744,11 +1771,11 @@ got_value:
 int toku_cachetable_maybe_get_and_pin (CACHEFILE cachefile, CACHEKEY key, uint32_t fullhash, pair_lock_type lock_type, void**value) {
     CACHETABLE ct = cachefile->cachetable;
     int r = -1;
+    bool got_lock = false;
     ct->list.pair_lock_by_fullhash(fullhash);
     PAIR p = ct->list.find_pair(cachefile, key, fullhash);
     if (p) {
         const bool lock_is_expensive = (lock_type == PL_WRITE_EXPENSIVE);
-        bool got_lock = false;
         switch (lock_type) {
         case PL_READ:
             if (p->value_rwlock.try_read_lock()) {
@@ -1779,12 +1806,14 @@ int toku_cachetable_maybe_get_and_pin (CACHEFILE cachefile, CACHEKEY key, uint32
             break;
         }
         if (got_lock) {
-            pair_touch(p);
             *value = p->value_data;
             r = 0;
         }
     }
     ct->list.pair_unlock_by_fullhash(fullhash);
+    if (got_lock) {
+        pair_touch(p);
+    }
     return r;
 }
 
@@ -1807,10 +1836,10 @@ int toku_cachetable_maybe_get_and_pin_clean (CACHEFILE cachefile, CACHEKEY key, 
                 p->value_rwlock.write_lock(lock_is_expensive);
                 got_lock = true;
             }
+            pair_unlock(p);
             if (got_lock) {
                 pair_touch(p);
             }
-            pair_unlock(p);
             break;
         case PL_WRITE_CHEAP:
         case PL_WRITE_EXPENSIVE:
@@ -1820,11 +1849,9 @@ int toku_cachetable_maybe_get_and_pin_clean (CACHEFILE cachefile, CACHEKEY key, 
                 p->value_rwlock.write_lock(lock_is_expensive);
                 got_lock = true;
             }
-            if (got_lock) {
-                pair_touch(p);
-            }
             pair_unlock(p);
             if (got_lock) {
+                pair_touch(p);
                 bool checkpoint_pending = get_checkpoint_pending(p, &ct->list);
                 write_locked_pair_for_checkpoint(ct, p, checkpoint_pending);
             }
@@ -1948,8 +1975,7 @@ maybe_pin_pair(
             pair_release_ref_unlocked(p);
         }
         p->value_rwlock.read_lock();
-    }
-    else if (lock_type == PL_WRITE_EXPENSIVE || lock_type == PL_WRITE_CHEAP){
+    } else if (lock_type == PL_WRITE_EXPENSIVE || lock_type == PL_WRITE_CHEAP){
         if (p->value_rwlock.write_lock_is_expensive()) {
             pair_add_ref_unlocked(p);
             pair_unlock(p);
@@ -1963,16 +1989,17 @@ maybe_pin_pair(
             pair_release_ref_unlocked(p);
         }
         p->value_rwlock.write_lock(expensive);
-    }
-    else {
+    } else {
         abort();
     }
 
     if (retval == TOKUDB_TRY_AGAIN) {
         unpin_pair(p, (lock_type == PL_READ));
     }    
-    pair_touch(p);
     pair_unlock(p);
+    if (retval == 0) {
+        pair_touch(p);
+    }
     return retval;
 }
 
@@ -2235,8 +2262,8 @@ found_pair:
     // are to wait for are readers?
     if (p->value_rwlock.try_write_lock(true)) {
         // nobody else is using the node, so we should go ahead and prefetch
-        pair_touch(p);
         pair_unlock(p);
+        pair_touch(p);
         bool partial_fetch_required = pf_req_callback(p->value_data, read_extraargs);
 
         if (partial_fetch_required) {
@@ -2364,9 +2391,9 @@ static void write_dirty_pairs_for_close(CACHETABLE ct, CACHEFILE cf) {
         }
     }
     else {
-        for (i = 0, p = ct->list.m_checkpoint_head;
+        for (i = 0, p = ct->list.m_lru_top;
             i < ct->list.m_n_in_table;
-            i++, p = p->clock_next)
+            i++, p = p->lru_down)
         {
             flush_pair_for_close_on_background_thread(p, bjm, ct);
         }
@@ -2399,7 +2426,7 @@ static void remove_all_pairs_for_close(CACHETABLE ct, CACHEFILE cf, bool evict_c
     }
     else {
         while (ct->list.m_n_in_table > 0) {
-            PAIR p = ct->list.m_checkpoint_head;
+            PAIR p = ct->list.m_lru_top;
             // if there is no cachefile, then we better
             // be evicting completely because we have no
             // cachefile to save the PAIRs to. At least,
@@ -2424,9 +2451,9 @@ static void verify_cachefile_flushed(CACHETABLE ct UU(), CACHEFILE cf UU()) {
         // Make a list of pairs that belong to this cachefile.
         uint32_t i;
         PAIR p = NULL;
-        for (i = 0, p = ct->list.m_checkpoint_head; 
+        for (i = 0, p = ct->list.m_lru_top; 
              i < ct->list.m_n_in_table; 
-             i++, p = p->clock_next) 
+             i++, p = p->lru_down) 
          {
              assert(p->cachefile != cf);
          }
@@ -3082,14 +3109,15 @@ int cleaner::run_cleaner(void) {
                         best_pair = m_pl->m_cleaner_head;
                     }
                 }
-                m_pl->m_cleaner_head = m_pl->m_cleaner_head->clock_next;
+                m_pl->m_cleaner_head = m_pl->m_cleaner_head->lru_down;
+                if (m_pl->m_cleaner_head == nullptr)
+                    m_pl->m_cleaner_head = m_pl->m_lru_top;
                 continue;
             }
             pair_lock(m_pl->m_cleaner_head);
             if (m_pl->m_cleaner_head->value_rwlock.users() > 0) {
                 pair_unlock(m_pl->m_cleaner_head);
-            }
-            else {
+            } else {
                 n_seen++;
                 long score = 0;
                 score = cleaner_thread_rate_pair(m_pl->m_cleaner_head);
@@ -3101,13 +3129,14 @@ int cleaner::run_cleaner(void) {
                         pair_unlock(best_pair);
                     }
                     best_pair = m_pl->m_cleaner_head;
-                }
-                else {
+                } else {
                     pair_unlock(m_pl->m_cleaner_head);
                 }
             }
             // Advance the cleaner head.
-            m_pl->m_cleaner_head = m_pl->m_cleaner_head->clock_next;
+            m_pl->m_cleaner_head = m_pl->m_cleaner_head->lru_down;
+            if (m_pl->m_cleaner_head == nullptr)
+                m_pl->m_cleaner_head = m_pl->m_lru_top;
         } while (m_pl->m_cleaner_head != first_pair && n_seen < CLEANER_N_TO_CHECK);
         m_pl->read_list_unlock();
 
@@ -3169,8 +3198,7 @@ int cleaner::run_cleaner(void) {
             // cachefile is still valid here, even though the cleaner
             // callback unlocks the pair. 
             bjm_remove_background_job(cf->bjm);
-        }
-        else {
+        } else {
             // If we didn't find anything this time around the cachetable,
             // we probably won't find anything if we run around again, so
             // just break out from the for-loop now and 
@@ -3211,11 +3239,12 @@ void pair_list::init() {
     m_table_size = INITIAL_PAIR_LIST_SIZE;
     m_num_locks = PAIR_LOCK_SIZE;
     m_n_in_table = 0;
-    m_clock_head = NULL;
     m_cleaner_head = NULL;
-    m_checkpoint_head = NULL;
     m_pending_head = NULL;
     m_table = NULL;
+
+    m_lru_top = nullptr;
+    m_lru_bottom = nullptr;
     
 
     pthread_rwlockattr_t attr;
@@ -3309,29 +3338,31 @@ void pair_list::evict_from_cachefile(PAIR p) {
 // requires caller to have grabbed write lock on list.
 //
 void pair_list::pair_remove (PAIR p) {
-    if (p->clock_prev == p) {
-        invariant(m_clock_head == p);
-        invariant(p->clock_next == p);
+    if (p->lru_up == nullptr && p->lru_down == nullptr) {
         invariant(m_cleaner_head == p);
-        invariant(m_checkpoint_head == p);
-        m_clock_head = NULL;
         m_cleaner_head = NULL;
-        m_checkpoint_head = NULL;
-    }
-    else {
-        if (p == m_clock_head) {
-            m_clock_head = m_clock_head->clock_next;
+
+        m_lru_top = nullptr;
+        m_lru_bottom = nullptr;
+    } else {
+        if (p == m_lru_top) {
+            m_lru_top = m_lru_top->lru_down;
         }
+
+        if (p == m_lru_bottom) {
+            m_lru_bottom = m_lru_bottom->lru_up;
+        }
+
         if (p == m_cleaner_head) {
-            m_cleaner_head = m_cleaner_head->clock_next;
+            m_cleaner_head = m_cleaner_head->lru_down;
+            if (m_cleaner_head == nullptr)
+                m_cleaner_head = m_lru_top;
         }
-        if (p == m_checkpoint_head) {
-            m_checkpoint_head = m_checkpoint_head->clock_next;
-        }
-        p->clock_prev->clock_next = p->clock_next;
-        p->clock_next->clock_prev = p->clock_prev;
+
+        if (p->lru_down) p->lru_down->lru_up = p->lru_up;
+        if (p->lru_up) p->lru_up->lru_down = p->lru_down;
     }
-    p->clock_prev = p->clock_next = NULL;
+    p->lru_down = p->lru_up = nullptr;
 }
 
 //Remove a pair from the list of pairs that were marked with the
@@ -3346,8 +3377,7 @@ void pair_list::pending_pairs_remove (PAIR p) {
     }
     if (p->pending_prev) {
         p->pending_prev->pending_next = p->pending_next;
-    }
-    else if (m_pending_head==p) {
+    } else if (m_pending_head==p) {
         m_pending_head = p->pending_next;
     }
     p->pending_prev = p->pending_next = NULL;
@@ -3359,8 +3389,7 @@ void pair_list::remove_from_hash_chain(PAIR p) {
     paranoid_invariant(m_table[h] != NULL);
     if (m_table[h] == p) {
         m_table[h] = p->hash_chain;
-    }
-    else {
+    } else {
         PAIR curr = m_table[h];
         while (curr->hash_chain != p) {
             curr = curr->hash_chain;
@@ -3396,26 +3425,22 @@ void pair_list::add_to_clock (PAIR p) {
     // requires that p is not currently in the table.
     // inserts p into the clock list at the tail.
 
-    p->count = CLOCK_INITIAL_COUNT;
     //assert either both head and tail are set or they are both NULL
     // tail and head exist
-    if (m_clock_head) {
-        assert(m_cleaner_head);
-        assert(m_checkpoint_head);
-        // insert right before the head
-        p->clock_next = m_clock_head;
-        p->clock_prev = m_clock_head->clock_prev;
+    if (m_lru_top) {
+        p->lru_down = m_lru_top;
+        p->lru_up = nullptr;
 
-        p->clock_prev->clock_next = p;
-        p->clock_next->clock_prev = p;
+        p->lru_down->lru_up = p;
 
-    }
-    // this is the first element in the list
-    else {
-        m_clock_head = p;
-        p->clock_next = p->clock_prev = m_clock_head;
+        m_lru_top = p;
+    } else {
+        // this is the first element in the list
         m_cleaner_head = p;
-        m_checkpoint_head = p;
+
+        m_lru_top = p;
+        m_lru_bottom = p;
+        p->lru_down = p->lru_up = nullptr;
     }
 }
 
@@ -3466,9 +3491,7 @@ void pair_list::verify() {
     // Now go through the clock chain, make sure everything in the LRU chain is hashed.
     {
         PAIR p;
-        bool is_first = true;
-        for (p = m_clock_head; m_clock_head != NULL && (p != m_clock_head || is_first); p=p->clock_next) {
-            is_first=false;
+        for (p = m_lru_top; p != nullptr; p=p->lru_down) {
             PAIR p2;
             uint32_t fullhash = p->fullhash;
             //assert(fullhash==toku_cachetable_hash(p->cachefile, p->key));
@@ -3479,7 +3502,7 @@ void pair_list::verify() {
                     goto next;
                 }
             }
-            fprintf(stderr, "Something in the clock chain is not hashed\n");
+            fprintf(stderr, "Something in the clock chain is not hashed %u\n", fullhash);
             assert(0);
         next:;
         }
@@ -3850,8 +3873,8 @@ void evictor::run_eviction(){
     // We must detect this case otherwise we will end up in an infinite loop below.
     //
     bool exited_early = false;
-    uint32_t num_pairs_examined_without_evicting = 0;
-    
+    uint32_t evictions_run = 0;
+
     while (this->eviction_needed()) {
         if (m_num_sleepers > 0 && this->should_sleeping_clients_wakeup()) {
             toku_cond_broadcast(&m_flow_control_cond);
@@ -3863,39 +3886,30 @@ void evictor::run_eviction(){
         bool some_eviction_ran = m_cf_list->evict_some_stale_pair(this);
         if (!some_eviction_ran) {
             m_pl->read_list_lock();
-            PAIR curr_in_clock = m_pl->m_clock_head;
+
+            PAIR curr_lru = m_pl->m_lru_bottom;
+
+            // This may or may not evict curr_lru entirely,
+            // it may dispatch full eviction to a background job that will
+            // eventually evict the node and remove it from the list.
+            //
+            // Breaks on either first successful PAIR selection for eviction
+            // or if no PAIRs could be found.
+            while (curr_lru && run_eviction_on_pair(curr_lru) == false) {
+                curr_lru = curr_lru->lru_up;
+            }
+
             // if nothing to evict, we need to exit
-            if (!curr_in_clock) {
+            if (!curr_lru) {
                 m_pl->read_list_unlock();
                 toku_mutex_lock(&m_ev_thread_lock);
                 exited_early = true;
                 goto exit;
             }
-            if (num_pairs_examined_without_evicting > m_pl->m_n_in_table) {
-                // we have a cycle where everything in the clock is in use
-                // do not return an error
-                // just let memory be overfull
-                m_pl->read_list_unlock();
-                toku_mutex_lock(&m_ev_thread_lock);
-                exited_early = true;
-                goto exit;
-            }
-            bool eviction_run = run_eviction_on_pair(curr_in_clock);
-            if (eviction_run) {
-                // reset the count
-                num_pairs_examined_without_evicting = 0;
-            }
-            else {
-                num_pairs_examined_without_evicting++;
-            }
-            // at this point, either curr_in_clock is still in the list because it has not been fully evicted,
-            // and we need to move ct->m_clock_head over. Otherwise, curr_in_clock has been fully evicted
-            // and we do NOT need to move ct->m_clock_head, as the removal of curr_in_clock
-            // modified ct->m_clock_head
-            if (m_pl->m_clock_head && (m_pl->m_clock_head == curr_in_clock)) {
-                m_pl->m_clock_head = m_pl->m_clock_head->clock_next;
-            }
+           
             m_pl->read_list_unlock();
+
+            evictions_run++;
         }
         toku_mutex_lock(&m_ev_thread_lock);
     }
@@ -3904,6 +3918,7 @@ exit:
     if (m_num_sleepers > 0 && (exited_early || this->should_sleeping_clients_wakeup())) {
         toku_cond_broadcast(&m_flow_control_cond);
     }
+
     return;
 }
 
@@ -3916,124 +3931,41 @@ exit:
 // IS held
 // on exit, the same conditions must apply
 //
-bool evictor::run_eviction_on_pair(PAIR curr_in_clock) {
-    uint32_t n_in_table;
-    int64_t size_current;
+// returns true if an eviction attempt is viable for the PAIR
+bool evictor::run_eviction_on_pair(PAIR evict_this_pair) {
     bool ret_val = false;
     // function meant to be called on PAIR that is not being accessed right now
-    CACHEFILE cf = curr_in_clock->cachefile;
+    CACHEFILE cf = evict_this_pair->cachefile;
     int r = bjm_add_background_job(cf->bjm);
     if (r) {
         goto exit;
     }
-    pair_lock(curr_in_clock);
+    pair_lock(evict_this_pair);
     // these are the circumstances under which we don't run eviction on a pair: 
     //  - if other users are waiting on the lock 
     //  - if the PAIR is referenced by users 
     //  - if the PAIR's disk_nb_mutex is in use, implying that it is 
     //    undergoing a checkpoint
-    if (curr_in_clock->value_rwlock.users() || 
-        curr_in_clock->refcount > 0 || 
-        nb_mutex_users(&curr_in_clock->disk_nb_mutex)) 
-    {
-        pair_unlock(curr_in_clock);
+    if (evict_this_pair->value_rwlock.users() || 
+        evict_this_pair->refcount > 0 || 
+        nb_mutex_users(&evict_this_pair->disk_nb_mutex) ||
+        evict_this_pair->eviction_pending == true) {
+        pair_unlock(evict_this_pair);
         bjm_remove_background_job(cf->bjm);
         goto exit;
     }
-
-    // extract and use these values so that we don't risk them changing
-    // out from underneath us in calculations below.
-    n_in_table = m_pl->m_n_in_table;
-    size_current = m_size_current; 
+    evict_this_pair->eviction_pending = true;
 
     // now that we have the pair mutex we care about, we can
     // release the read list lock and reacquire it at the end of the function
     m_pl->read_list_unlock();
     ret_val = true;
-    if (curr_in_clock->count > 0) {
-        toku::context pe_ctx(CTX_PARTIAL_EVICTION);
-
-        uint32_t curr_size = curr_in_clock->attr.size;
-        // if the size of this PAIR is greater than the average size of PAIRs
-        // in the cachetable, then decrement it, otherwise, decrement
-        // probabilistically
-        if (curr_size*n_in_table >= size_current) {
-            curr_in_clock->count--;
-        } else {
-            // generate a random number between 0 and 2^16
-            assert(size_current <= (INT64_MAX / ((1<<16)-1))); // to protect against possible overflows
-            int32_t rnd = myrandom_r(&m_random_data) % (1<<16);
-            // The if-statement below will be true with probability of
-            // curr_size/(average size of PAIR in cachetable)
-            // Here is how the math is done:
-            //   average_size = size_current/n_in_table
-            //   curr_size/average_size = curr_size*n_in_table/size_current
-            //   we evaluate if a random number from 0 to 2^16 is less than
-            //   than curr_size/average_size * 2^16. So, our if-clause should be
-            //    if (2^16*curr_size/average_size > rnd)
-            //    this evaluates to:
-            //    if (2^16*curr_size*n_in_table/size_current > rnd)
-            //    by multiplying each side of the equation by size_current, we get
-            //    if (2^16*curr_size*n_in_table > rnd*size_current)
-            //    and dividing each side by 2^16,
-            //    we get the if-clause below
-            //
-            if ((((int64_t)curr_size) * n_in_table) >= (((int64_t)rnd) * size_current)>>16) {
-                curr_in_clock->count--;
-            }
-        }
-        // call the partial eviction callback
-        curr_in_clock->value_rwlock.write_lock(true);
-
-        void *value = curr_in_clock->value_data;
-        void* disk_data = curr_in_clock->disk_data;
-        void *write_extraargs = curr_in_clock->write_extraargs;
-        enum partial_eviction_cost cost;
-        long bytes_freed_estimate = 0;
-        curr_in_clock->pe_est_callback(
-            value, 
-            disk_data,
-            &bytes_freed_estimate, 
-            &cost, 
-            write_extraargs
-            );
-        if (cost == PE_CHEAP) {
-            pair_unlock(curr_in_clock);
-            curr_in_clock->size_evicting_estimate = 0;
-            this->do_partial_eviction(curr_in_clock);
-            bjm_remove_background_job(cf->bjm);
-        }
-        else if (cost == PE_EXPENSIVE) {
-            // only bother running an expensive partial eviction
-            // if it is expected to free space
-            if (bytes_freed_estimate > 0) {
-                pair_unlock(curr_in_clock);
-                curr_in_clock->size_evicting_estimate = bytes_freed_estimate;
-                toku_mutex_lock(&m_ev_thread_lock);
-                m_size_evicting += bytes_freed_estimate;
-                toku_mutex_unlock(&m_ev_thread_lock);
-                toku_kibbutz_enq(
-                    m_kibbutz, 
-                    cachetable_partial_eviction, 
-                    curr_in_clock
-                    );
-            }
-            else {
-                curr_in_clock->value_rwlock.write_unlock();
-                pair_unlock(curr_in_clock);
-                bjm_remove_background_job(cf->bjm);
-            }
-        }
-        else {
-            assert(false);
-        }        
-    }
-    else {
+    {
         toku::context pe_ctx(CTX_FULL_EVICTION);
 
-        // responsibility of try_evict_pair to eventually remove background job
+        // responsibility of try_evict_this_pair to eventually remove background job
         // pair's mutex is still grabbed here
-        this->try_evict_pair(curr_in_clock);
+        this->try_evict_pair(evict_this_pair);
     }
     // regrab the read list lock, because the caller assumes
     // that it is held. The contract requires this.
@@ -4116,8 +4048,7 @@ void evictor::try_evict_pair(PAIR p) {
         // false for the for_checkpoint parameter
         this->evict_pair(p, false);
         bjm_remove_background_job(cf->bjm);
-    }
-    else {
+    } else {
         pair_unlock(p);
         toku_mutex_lock(&m_ev_thread_lock);
         assert(m_size_evicting >= 0);
@@ -4170,6 +4101,8 @@ void evictor::evict_pair(PAIR p, bool for_checkpoint) {
         assert(p->cloned_value_data == NULL);
         cachetable_remove_pair(m_pl, this, p);
         removed = true;
+    } else {
+        p->eviction_pending = false;
     }
     pair_unlock(p);
     m_pl->write_list_unlock();
@@ -4530,7 +4463,7 @@ void checkpointer::log_begin_checkpoint() {
 void checkpointer::turn_on_pending_bits() {
     PAIR p = NULL;
     uint32_t i;
-    for (i = 0, p = m_list->m_checkpoint_head; i < m_list->m_n_in_table; i++, p = p->clock_next) {
+    for (i = 0, p = m_list->m_lru_top; i < m_list->m_n_in_table; i++, p = p->lru_down) {
         assert(!p->checkpoint_pending);
         //Only include pairs belonging to cachefiles in the checkpoint
         if (!p->cachefile->for_checkpoint) {
@@ -4553,7 +4486,7 @@ void checkpointer::turn_on_pending_bits() {
         p->pending_prev = NULL;
         m_list->m_pending_head = p;
     }
-    invariant(p == m_list->m_checkpoint_head);
+    invariant(p == nullptr);
 }
 
 void checkpointer::add_background_job() {

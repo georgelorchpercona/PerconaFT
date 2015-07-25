@@ -245,7 +245,6 @@ struct ctpair {
     enum cachetable_dirty dirty;
 
     // protected by PAIR->mutex
-    uint32_t count;        // clock count
     uint32_t refcount; // if > 0, then this PAIR is referenced by
                        // callers to the cachetable, and therefore cannot 
                        // be evicted
@@ -282,13 +281,19 @@ struct ctpair {
     // A PAIR is stored in a pair_list (which happens to be PAIR->list).
     // These variables are protected by the list lock in the pair_list
     //
-    // clock_next,clock_prev represent a circular doubly-linked list.
-    PAIR clock_next,clock_prev; // In clock.
     PAIR hash_chain;
 
     // pending_next,pending_next represent a non-circular doubly-linked list.
     PAIR pending_next;
     PAIR pending_prev;
+
+    // protected by pair list m_list_lock
+    PAIR lru_down; // go to the down (older) of LRU list
+    PAIR lru_up; // go to the down (older) of LRU list
+    
+    // indicates that the node is undergoing an eviction and should not be
+    // selected for eviction again. Protected by PAIR lock.
+    bool eviction_pending;
 
     // cf_next, cf_prev represent a non-circular doubly-linked list.
     // entries in linked list for PAIRs in a cachefile, these are protected
@@ -340,14 +345,15 @@ public:
     // the lists must hold the write list lock. Here is the
     // association between what threads may hold a read lock
     // on the list lock while iterating:
-    //  - clock_head -> eviction thread (evictor)
     //  - cleaner_head -> cleaner thread (cleaner)
     //  - pending_head -> checkpoint thread (checkpointer)
     //
-    PAIR m_clock_head; // of clock . head is the next thing to be up for decrement. 
     PAIR m_cleaner_head; // for cleaner thread. head is the next thing to look at for possible cleaning.
-    PAIR m_checkpoint_head; // for begin checkpoint to iterate over PAIRs and mark as pending_checkpoint
     PAIR m_pending_head; // list of pairs marked with checkpoint_pending
+
+    // top (most recent) and bottom (oldest) in LRU list
+    // protected by m_list_lock;
+    PAIR m_lru_top, m_lru_bottom;
 
     // this field is public so we are still POD
 
