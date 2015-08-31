@@ -259,6 +259,7 @@ toku_checkpoint(CHECKPOINTER cp, TOKULOGGER logger,
     CP_STATUS_VAL(CP_TIME_LAST_CHECKPOINT_BEGIN) = time(NULL);
     uint64_t t_checkpoint_begin_start = toku_current_time_microsec();
     toku_cachetable_begin_checkpoint(cp, logger);
+    printf("begin_checkpoint\n");
     uint64_t t_checkpoint_begin_end = toku_current_time_microsec();
 
     toku_ft_open_close_unlock();
