@@ -357,6 +357,7 @@ int deserialize_ft_versioned(int fd, struct rbuf *rb, FT *ftp, uint32_t version)
             .basementnodesize = basementnodesize,
             .compression_method = compression_method,
             .fanout = fanout,
+            .pushdepth = FT_DEFAULT_PUSHDEPTH,
             .highest_unused_msn_for_upgrade = highest_unused_msn_for_upgrade,
             .max_msn_in_ft = max_msn_in_ft,
             .time_of_last_optimize_begin = time_of_last_optimize_begin,

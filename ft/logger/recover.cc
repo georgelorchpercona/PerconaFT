@@ -298,8 +298,19 @@ static const char *recover_state(RECOVER_ENV renv) {
 }
 
 // Open the file if it is not already open.  If it is already open, then do nothing.
-static int internal_recover_fopen_or_fcreate (RECOVER_ENV renv, bool must_create, int UU(mode), BYTESTRING *bs_iname, FILENUM filenum, uint32_t treeflags,
-                                              TOKUTXN txn, uint32_t nodesize, uint32_t basementnodesize, enum toku_compression_method compression_method, LSN max_acceptable_lsn) {
+static int internal_recover_fopen_or_fcreate(
+    RECOVER_ENV renv,
+    bool must_create,
+    int UU(mode),
+    BYTESTRING *bs_iname,
+    FILENUM filenum,
+    uint32_t treeflags,
+    TOKUTXN txn,
+    uint32_t nodesize,
+    uint32_t basementnodesize,
+    enum toku_compression_method compression_method,
+    LSN max_acceptable_lsn) {
+
     int r = 0;
     FT_HANDLE ft_handle = NULL;
     char *iname = fixup_fname(bs_iname);
@@ -466,7 +477,18 @@ static int toku_recover_fassociate (struct logtype_fassociate *l, RECOVER_ENV re
                 renv->logger->rollback_cachefile = t->ft->cf;
                 toku_logger_initialize_rollback_cache(renv->logger, t->ft);
             } else {
-                r = internal_recover_fopen_or_fcreate(renv, false, 0, &l->iname, l->filenum, l->treeflags, NULL, 0, 0, TOKU_DEFAULT_COMPRESSION_METHOD, max_acceptable_lsn);
+                r = internal_recover_fopen_or_fcreate(
+                    renv,
+                    false,
+                    0,
+                    &l->iname,
+                    l->filenum,
+                    l->treeflags,
+                    NULL,
+                    0,
+                    0,
+                    TOKU_DEFAULT_COMPRESSION_METHOD,
+                    max_acceptable_lsn);
                 assert(r==0);
             }
         }
@@ -818,7 +840,18 @@ static int toku_recover_fcreate (struct logtype_fcreate *l, RECOVER_ENV renv) {
     toku_free(iname);
 
     bool must_create = true;
-    r = internal_recover_fopen_or_fcreate(renv, must_create, l->mode, &l->iname, l->filenum, l->treeflags, txn, l->nodesize, l->basementnodesize, (enum toku_compression_method) l->compression_method, MAX_LSN);
+    r = internal_recover_fopen_or_fcreate(
+        renv,
+        must_create,
+        l->mode,
+        &l->iname,
+        l->filenum,
+        l->treeflags,
+        txn,
+        l->nodesize,
+        l->basementnodesize,
+        (enum toku_compression_method) l->compression_method,
+        MAX_LSN);
     return r;
 }
 
@@ -842,7 +875,18 @@ static int toku_recover_fopen (struct logtype_fopen *l, RECOVER_ENV renv) {
     char *fname = fixup_fname(&l->iname);
 
     assert(0!=strcmp(fname, toku_product_name_strings.rollback_cachefile)); //Rollback cachefile can be opened only via fassociate.
-    r = internal_recover_fopen_or_fcreate(renv, must_create, 0, &l->iname, l->filenum, l->treeflags, txn, 0, 0, TOKU_DEFAULT_COMPRESSION_METHOD, MAX_LSN);
+    r = internal_recover_fopen_or_fcreate(
+        renv,
+        must_create,
+        0,
+        &l->iname,
+        l->filenum,
+        l->treeflags,
+        txn,
+        0,
+        0,
+        TOKU_DEFAULT_COMPRESSION_METHOD,
+        MAX_LSN);
 
     toku_free(fname);
     return r;

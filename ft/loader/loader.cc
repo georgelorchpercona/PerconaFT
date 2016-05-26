@@ -2384,19 +2384,20 @@ static int copy_maxkey(DBT *maxkey) {
     return r;
 }
 
-static int toku_loader_write_ft_from_q (FTLOADER bl,
-                                         const DESCRIPTOR descriptor,
-                                         int fd, // write to here
-                                         int progress_allocation,
-                                         QUEUE q,
-                                         uint64_t total_disksize_estimate,
-                                         int which_db,
-                                         uint32_t target_nodesize,
-                                         uint32_t target_basementnodesize,
-                                         enum toku_compression_method target_compression_method,
-                                         uint32_t target_fanout)
+static int toku_loader_write_ft_from_q(
+    FTLOADER bl,
+    const DESCRIPTOR descriptor,
+    int fd, // write to here
+    int progress_allocation,
+    QUEUE q,
+    uint64_t total_disksize_estimate,
+    int which_db,
+    uint32_t target_nodesize,
+    uint32_t target_basementnodesize,
+    enum toku_compression_method target_compression_method,
+    uint32_t target_fanout,
+    uint32_t target_pushdepth) {
 // Effect: Consume a sequence of rowsets work from a queue, creating a fractal tree.  Closes fd.
-{
     // set the number of fractal tree writer threads so that we can partition memory in the merger
     ft_loader_set_fractal_workers_count(bl);
 
@@ -2425,7 +2426,16 @@ static int toku_loader_write_ft_from_q (FTLOADER bl,
 
     // TODO: (Zardosht/Yoni/Leif), do this code properly
     struct ft ft;
-    toku_ft_init(&ft, (BLOCKNUM){0}, bl->load_lsn, root_xid_that_created, target_nodesize, target_basementnodesize, target_compression_method, target_fanout);
+    toku_ft_init(
+        &ft,
+        (BLOCKNUM){0},
+        bl->load_lsn,
+        root_xid_that_created,
+        target_nodesize,
+        target_basementnodesize,
+        target_compression_method,
+        target_fanout,
+        target_pushdepth);
 
     struct dbout out;
     ZERO_STRUCT(out);
@@ -2683,28 +2693,58 @@ static int toku_loader_write_ft_from_q (FTLOADER bl,
     return result;
 }
 
-int toku_loader_write_ft_from_q_in_C (FTLOADER                bl,
-                                      const DESCRIPTOR descriptor,
-                                      int                      fd, // write to here
-                                      int                      progress_allocation,
-                                      QUEUE                    q,
-                                      uint64_t                 total_disksize_estimate,
-                                      int                      which_db,
-                                      uint32_t                 target_nodesize,
-                                      uint32_t                 target_basementnodesize,
-                                      enum toku_compression_method target_compression_method,
-                                      uint32_t                 target_fanout)
+int toku_loader_write_ft_from_q_in_C(
+    FTLOADER bl,
+    const DESCRIPTOR descriptor,
+    int fd, // write to here
+    int progress_allocation,
+    QUEUE q,
+    uint64_t total_disksize_estimate,
+    int which_db,
+    uint32_t target_nodesize,
+    uint32_t target_basementnodesize,
+    enum toku_compression_method target_compression_method,
+    uint32_t target_fanout,
+    uint32_t target_pushdepth) {
+
 // This is probably only for testing.
-{
-    target_nodesize = target_nodesize == 0 ? default_loader_nodesize : target_nodesize;
-    target_basementnodesize = target_basementnodesize == 0 ? default_loader_basementnodesize : target_basementnodesize;
-    return toku_loader_write_ft_from_q (bl, descriptor, fd, progress_allocation, q, total_disksize_estimate, which_db, target_nodesize, target_basementnodesize, target_compression_method, target_fanout);
+    target_nodesize =
+        target_nodesize == 0 ? default_loader_nodesize : target_nodesize;
+    target_basementnodesize =
+        target_basementnodesize == 0 ?
+            default_loader_basementnodesize : target_basementnodesize;
+
+    return toku_loader_write_ft_from_q(
+        bl,
+        descriptor,
+        fd,
+        progress_allocation,
+        q,
+        total_disksize_estimate,
+        which_db,
+        target_nodesize,
+        target_basementnodesize,
+        target_compression_method,
+        target_fanout,
+        target_pushdepth);
 }
 
 
 static void* fractal_thread (void *ftav) {
     struct fractal_thread_args *fta = (struct fractal_thread_args *)ftav;
-    int r = toku_loader_write_ft_from_q (fta->bl, fta->descriptor, fta->fd, fta->progress_allocation, fta->q, fta->total_disksize_estimate, fta->which_db, fta->target_nodesize, fta->target_basementnodesize, fta->target_compression_method, fta->target_fanout);
+    int r = toku_loader_write_ft_from_q(
+        fta->bl,
+        fta->descriptor,
+        fta->fd,
+        fta->progress_allocation,
+        fta->q,
+        fta->total_disksize_estimate,
+        fta->which_db,
+        fta->target_nodesize,
+        fta->target_basementnodesize,
+        fta->target_compression_method,
+        fta->target_fanout,
+        fta->target_pushdepth);
     fta->errno_result = r;
     return NULL;
 }
@@ -2735,7 +2775,11 @@ static int loader_do_i (FTLOADER bl,
             r = get_error_errno(); goto error;
         }
 
-        uint32_t target_nodesize, target_basementnodesize, target_fanout;
+        uint32_t
+            target_nodesize,
+            target_basementnodesize,
+            target_fanout,
+            target_pushdepth;
         enum toku_compression_method target_compression_method;
         r = dest_db->get_pagesize(dest_db, &target_nodesize);
         invariant_zero(r);
@@ -2745,12 +2789,14 @@ static int loader_do_i (FTLOADER bl,
         invariant_zero(r);
         r = dest_db->get_fanout(dest_db, &target_fanout);
         invariant_zero(r);
+        r = dest_db->get_pushdepth(dest_db, &target_pushdepth);
+        invariant_zero(r);
 
         if (bl->allow_puts) {
             // a better allocation would be to figure out roughly how many merge passes we'll need.
             int allocation_for_merge = (2*progress_allocation)/3;
             progress_allocation -= allocation_for_merge;
-            
+
             // This structure must stay live until the join below.
             struct fractal_thread_args fta = { 
                 bl,
@@ -2764,7 +2810,8 @@ static int loader_do_i (FTLOADER bl,
                 target_nodesize,
                 target_basementnodesize,
                 target_compression_method,
-                target_fanout
+                target_fanout,
+                target_pushdepth
             };
 
             r = toku_pthread_create(bl->fractal_threads+which_db, NULL, fractal_thread, (void*)&fta);
@@ -2791,9 +2838,19 @@ static int loader_do_i (FTLOADER bl,
             }
         } else {
             toku_queue_eof(bl->fractal_queues[which_db]);
-            r = toku_loader_write_ft_from_q(bl, descriptor, fd, progress_allocation, 
-                                            bl->fractal_queues[which_db], bl->extracted_datasizes[which_db], which_db, 
-                                            target_nodesize, target_basementnodesize, target_compression_method, target_fanout);
+            r = toku_loader_write_ft_from_q(
+                bl,
+                descriptor,
+                fd,
+                progress_allocation,
+                bl->fractal_queues[which_db],
+                bl->extracted_datasizes[which_db],
+                which_db,
+                target_nodesize,
+                target_basementnodesize,
+                target_compression_method,
+                target_fanout,
+                target_pushdepth);
         }
     }
 

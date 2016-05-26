@@ -670,6 +670,29 @@ toku_db_get_fanout(DB *db, unsigned int *fanout) {
     return 0;
 }
 
+static int 
+toku_db_change_pushdepth(DB *db, unsigned int pushdepth) {
+    HANDLE_PANICKED_DB(db);
+    if (!db_opened(db)) return EINVAL;
+    toku_ft_handle_set_pushdepth(db->i->ft_handle, pushdepth);
+    return 0;
+}
+
+static int 
+toku_db_set_pushdepth(DB *db, unsigned int pushdepth) {
+    HANDLE_PANICKED_DB(db);
+    if (!db_opened(db)) return EINVAL;
+    toku_ft_handle_set_pushdepth(db->i->ft_handle, pushdepth);
+    return 0;
+}
+
+static int 
+toku_db_get_pushdepth(DB *db, unsigned int *pushdepth) {
+    HANDLE_PANICKED_DB(db);
+    toku_ft_handle_get_pushdepth(db->i->ft_handle, pushdepth);
+    return 0;
+}
+
 static int
 toku_db_set_memcmp_magic(DB *db, uint8_t magic) {
     HANDLE_PANICKED_DB(db);
@@ -1095,8 +1118,11 @@ toku_db_create(DB ** db, DB_ENV * env, uint32_t flags) {
     USDB(change_compression_method);
     USDB(set_fanout);
     USDB(get_fanout);
-    USDB(set_memcmp_magic);
     USDB(change_fanout);
+    USDB(set_pushdepth);
+    USDB(get_pushdepth);
+    USDB(change_pushdepth);
+    USDB(set_memcmp_magic);
     USDB(set_flags);
     USDB(get_flags);
     USDB(fd);

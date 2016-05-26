@@ -320,7 +320,9 @@ void FT_STATUS_S::init() {
     FT_STATUS_INIT(FT_PRO_NUM_INJECT_DEPTH_1,                 PROMOTION_INJECTIONS_AT_DEPTH_1,      PARCOUNT, "promotion: injections at depth 1");
     FT_STATUS_INIT(FT_PRO_NUM_INJECT_DEPTH_2,                 PROMOTION_INJECTIONS_AT_DEPTH_2,      PARCOUNT, "promotion: injections at depth 2");
     FT_STATUS_INIT(FT_PRO_NUM_INJECT_DEPTH_3,                 PROMOTION_INJECTIONS_AT_DEPTH_3,      PARCOUNT, "promotion: injections at depth 3");
-    FT_STATUS_INIT(FT_PRO_NUM_INJECT_DEPTH_GT3,               PROMOTION_INJECTIONS_LOWER_THAN_DEPTH_3, PARCOUNT, "promotion: injections lower than depth 3");
+    FT_STATUS_INIT(FT_PRO_NUM_INJECT_DEPTH_4,                 PROMOTION_INJECTIONS_AT_DEPTH_4,      PARCOUNT, "promotion: injections at depth 4");
+    FT_STATUS_INIT(FT_PRO_NUM_INJECT_DEPTH_5,                 PROMOTION_INJECTIONS_AT_DEPTH_5,      PARCOUNT, "promotion: injections at depth 5");
+    FT_STATUS_INIT(FT_PRO_NUM_INJECT_DEPTH_GT5,               PROMOTION_INJECTIONS_LOWER_THAN_DEPTH_5, PARCOUNT, "promotion: injections lower than depth 5");
     FT_STATUS_INIT(FT_PRO_NUM_STOP_NONEMPTY_BUF,              PROMOTION_STOPPED_NONEMPTY_BUFFER,    PARCOUNT, "promotion: stopped because of a nonempty buffer");
     FT_STATUS_INIT(FT_PRO_NUM_STOP_H1,                        PROMOTION_STOPPED_AT_HEIGHT_1,        PARCOUNT, "promotion: stopped at height 1");
     FT_STATUS_INIT(FT_PRO_NUM_STOP_LOCK_CHILD,                PROMOTION_STOPPED_CHILD_LOCKED_OR_NOT_IN_MEMORY, PARCOUNT, "promotion: stopped because the child was locked or not at all in memory");

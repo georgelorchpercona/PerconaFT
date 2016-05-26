@@ -142,7 +142,8 @@ test_serialize_leaf(int valsize, int nelts, double entropy, int ser_runs, int de
                  4*1024*1024,
                  128*1024,
                  TOKU_DEFAULT_COMPRESSION_METHOD,
-                 16);
+                 16,
+                 2);
     ft_h->cmp.create(long_key_cmp, nullptr);
     ft->ft = ft_h;
     
@@ -305,7 +306,8 @@ test_serialize_nonleaf(int valsize, int nelts, double entropy, int ser_runs, int
                  4*1024*1024,
                  128*1024,
                  TOKU_DEFAULT_COMPRESSION_METHOD,
-                 16);
+                 16,
+                 2);
     ft_h->cmp.create(long_key_cmp, nullptr);
     ft->ft = ft_h;
     

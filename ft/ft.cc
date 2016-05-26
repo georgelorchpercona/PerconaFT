@@ -378,6 +378,7 @@ ft_header_create(FT_OPTIONS options, BLOCKNUM root_blocknum, TXNID root_xid_that
         .basementnodesize = options->basementnodesize,
         .compression_method = options->compression_method,
         .fanout = options->fanout,
+        .pushdepth = options->pushdepth,
         .highest_unused_msn_for_upgrade = { .msn = (MIN_MSN.msn - 1) },
         .max_msn_in_ft = ZERO_MSN,
         .time_of_last_optimize_begin = 0,
@@ -540,23 +541,24 @@ toku_ft_note_hot_complete(FT_HANDLE ft_handle, bool success, MSN msn_at_start_of
 }
 
 
-void
-toku_ft_init(FT ft,
-             BLOCKNUM root_blocknum_on_disk,
-             LSN checkpoint_lsn,
-             TXNID root_xid_that_created,
-             uint32_t target_nodesize,
-             uint32_t target_basementnodesize,
-             enum toku_compression_method compression_method,
-             uint32_t fanout
-             )
-{
+void toku_ft_init(
+    FT ft,
+    BLOCKNUM root_blocknum_on_disk,
+    LSN checkpoint_lsn,
+    TXNID root_xid_that_created,
+    uint32_t target_nodesize,
+    uint32_t target_basementnodesize,
+    enum toku_compression_method compression_method,
+    uint32_t fanout,
+    uint32_t pushdepth) {
+
     memset(ft, 0, sizeof *ft);
     struct ft_options options = {
         .nodesize = target_nodesize,
         .basementnodesize = target_basementnodesize,
         .compression_method = compression_method,
         .fanout = fanout,
+        .pushdepth = pushdepth,
         .flags = 0,
         .memcmp_magic = 0,
         .compare_fun = NULL,
@@ -579,6 +581,7 @@ ft_handle_open_for_redirect(FT_HANDLE *new_ftp, const char *fname_in_env, TOKUTX
     toku_ft_handle_set_basementnodesize(ft_handle, old_ft->h->basementnodesize);
     toku_ft_handle_set_compression_method(ft_handle, old_ft->h->compression_method);
     toku_ft_handle_set_fanout(ft_handle, old_ft->h->fanout);
+    toku_ft_handle_set_pushdepth(ft_handle, old_ft->h->pushdepth);
     CACHETABLE ct = toku_cachefile_get_cachetable(old_ft->cf);
     int r = toku_ft_handle_open_with_dict_id(ft_handle, fname_in_env, 0, 0, ct, txn, old_ft->dict_id);
     if (r != 0) {
@@ -991,6 +994,19 @@ void toku_ft_set_fanout(FT ft, unsigned int fanout) {
 void toku_ft_get_fanout(FT ft, unsigned int *fanout) {
     toku_ft_lock(ft);
     *fanout = ft->h->fanout;
+    toku_ft_unlock(ft);
+}
+
+void toku_ft_set_pushdepth(FT ft, unsigned int pushdepth) {
+    toku_ft_lock(ft);
+    ft->h->pushdepth = pushdepth;
+//    ft->h->dirty = 1;
+    toku_ft_unlock(ft);
+}
+
+void toku_ft_get_pushdepth(FT ft, unsigned int *pushdepth) {
+    toku_ft_lock(ft);
+    *pushdepth = ft->h->pushdepth;
     toku_ft_unlock(ft);
 }
 

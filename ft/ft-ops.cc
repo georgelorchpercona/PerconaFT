@@ -1565,14 +1565,17 @@ static void inject_message_at_this_blocknum(FT ft, CACHEKEY cachekey, uint32_t f
     inject_message_in_locked_node(ft, node, -1, msg, flow_deltas, gc_info);
 }
 
-__attribute__((const))
-static inline bool should_inject_in_node(seqinsert_loc loc, int height, int depth)
+__attribute__((const)) static inline bool should_inject_in_node(
+    seqinsert_loc loc,
+    int height,
+    int depth,
+    int pushdepth) {
 // We should inject directly in a node if:
 //  - it's a leaf, or
 //  - it's a height 1 node not at either extreme, or
-//  - it's a depth 2 node not at either extreme
-{
-    return (height == 0 || (loc == NEITHER_EXTREME && (height <= 1 || depth >= 2)));
+//  - it's a depth >= pushdepth node not at either extreme
+    if (pushdepth == 0) pushdepth = 2;
+    return (height == 0 || (loc == NEITHER_EXTREME && (height <= 1 || depth >= pushdepth)));
 }
 
 static void ft_verify_or_set_rightmost_blocknum(FT ft, BLOCKNUM b)
@@ -1630,7 +1633,11 @@ static void push_something_in_subtree(
 //   If the birdie doesn't say to promote, we try maybe_get_and_pin.  If we get the node cheaply, and it's dirty, we promote anyway.
 {
     toku_ftnode_assert_fully_in_memory(subtree_root);
-    if (should_inject_in_node(loc, subtree_root->height, depth)) {
+    if (should_inject_in_node(
+            loc,
+            subtree_root->height,
+            depth,
+            static_cast<int>(ft->h->pushdepth))) {
         switch (depth) {
         case 0:
             FT_STATUS_INC(FT_PRO_NUM_INJECT_DEPTH_0, 1); break;
@@ -1640,8 +1647,12 @@ static void push_something_in_subtree(
             FT_STATUS_INC(FT_PRO_NUM_INJECT_DEPTH_2, 1); break;
         case 3:
             FT_STATUS_INC(FT_PRO_NUM_INJECT_DEPTH_3, 1); break;
+        case 4:
+            FT_STATUS_INC(FT_PRO_NUM_INJECT_DEPTH_4, 1); break;
+        case 5:
+            FT_STATUS_INC(FT_PRO_NUM_INJECT_DEPTH_5, 1); break;
         default:
-            FT_STATUS_INC(FT_PRO_NUM_INJECT_DEPTH_GT3, 1); break;
+            FT_STATUS_INC(FT_PRO_NUM_INJECT_DEPTH_GT5, 1); break;
         }
         // If the target node is a non-root leaf node on the right extreme,
         // set the rightmost blocknum. We know there are no messages above us
@@ -1697,12 +1708,15 @@ static void push_something_in_subtree(
                 // If we're locking a leaf, or a height 1 node or depth 2
                 // node in the middle, we know we won't promote further
                 // than that, so just get a write lock now.
-                const pair_lock_type lock_type = (should_inject_in_node(next_loc, child_height, child_depth)
-                                                  ? PL_WRITE_CHEAP
-                                                  : PL_READ);
+                const pair_lock_type lock_type = 
+                    should_inject_in_node(
+                        next_loc,
+                        child_height,
+                        child_depth,
+                        static_cast<int>(ft->h->pushdepth)) ? PL_WRITE_CHEAP : PL_READ;
                 if (next_loc != NEITHER_EXTREME || (toku_bnc_should_promote(ft, bnc) && depth <= 1)) {
                     // If we're on either extreme, or the birdie wants to
-                    // promote and we're in the top two levels of the
+                    // promote and we're in the 'pushdepth' levels of the
                     // tree, don't stop just because someone else has the
                     // node locked.
                     ftnode_fetch_extra bfe;
@@ -1787,8 +1801,12 @@ static void push_something_in_subtree(
                 FT_STATUS_INC(FT_PRO_NUM_INJECT_DEPTH_2, 1); break;
             case 3:
                 FT_STATUS_INC(FT_PRO_NUM_INJECT_DEPTH_3, 1); break;
+            case 4:
+                FT_STATUS_INC(FT_PRO_NUM_INJECT_DEPTH_4, 1); break;
+            case 5:
+                FT_STATUS_INC(FT_PRO_NUM_INJECT_DEPTH_5, 1); break;
             default:
-                FT_STATUS_INC(FT_PRO_NUM_INJECT_DEPTH_GT3, 1); break;
+                FT_STATUS_INC(FT_PRO_NUM_INJECT_DEPTH_GT5, 1); break;
             }
             inject_message_at_this_blocknum(ft, subtree_root_blocknum, subtree_root_fullhash, msg, flow_deltas, gc_info);
         }
@@ -2543,6 +2561,7 @@ int toku_open_ft_handle (const char *fname, int is_create, FT_HANDLE *ft_handle_
     toku_ft_handle_set_basementnodesize(ft_handle, basementnodesize);
     toku_ft_handle_set_compression_method(ft_handle, compression_method);
     toku_ft_handle_set_fanout(ft_handle, 16);
+    toku_ft_handle_set_pushdepth(ft_handle, FT_DEFAULT_PUSHDEPTH);
     toku_ft_set_bt_compare(ft_handle, compare_fun);
 
     int r = toku_ft_handle_open(ft_handle, fname, is_create, only_create, cachetable, txn);
@@ -2652,6 +2671,27 @@ toku_ft_handle_get_fanout(FT_HANDLE ft_handle, unsigned int *fanout)
     }
 }
 
+void
+toku_ft_handle_set_pushdepth(FT_HANDLE ft_handle, unsigned int pushdepth)
+{
+    if (ft_handle->ft) {
+        toku_ft_set_pushdepth(ft_handle->ft, pushdepth);
+    }
+    else {
+        ft_handle->options.pushdepth = pushdepth;
+    }
+}
+
+void
+toku_ft_handle_get_pushdepth(FT_HANDLE ft_handle, unsigned int *pushdepth)
+{
+    if (ft_handle->ft) {
+        toku_ft_get_pushdepth(ft_handle->ft, pushdepth);
+    }
+    else {
+        *pushdepth = ft_handle->options.pushdepth;
+    }
+}
 // The memcmp magic byte may be set on a per fractal tree basis to communicate
 // that if two keys begin with this byte, they may be compared with the builtin
 // key comparison function. This greatly optimizes certain in-memory workloads,
@@ -2730,13 +2770,13 @@ void toku_ft_change_descriptor(
     }
 }
 
-static void
-toku_ft_handle_inherit_options(FT_HANDLE t, FT ft) {
+static void toku_ft_handle_inherit_options(FT_HANDLE t, FT ft) {
     struct ft_options options = {
         .nodesize = ft->h->nodesize,
         .basementnodesize = ft->h->basementnodesize,
         .compression_method = ft->h->compression_method,
         .fanout = ft->h->fanout,
+        .pushdepth = ft->h->pushdepth,
         .flags = ft->h->flags,
         .memcmp_magic = ft->cmp.get_memcmp_magic(),
         .compare_fun = ft->cmp.get_compare_func(),

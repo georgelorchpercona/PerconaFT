@@ -239,6 +239,7 @@ struct fractal_thread_args {
     uint32_t                 target_basementnodesize;
     enum toku_compression_method target_compression_method;
     uint32_t                 target_fanout;
+    uint32_t                 target_pushdepth;
 };
 
 void toku_ft_loader_set_n_rows(FTLOADER bl, uint64_t n_rows);
@@ -261,17 +262,19 @@ int toku_merge_some_files_using_dbufio (const bool to_q, FIDX dest_data, QUEUE q
 int ft_loader_sort_and_write_rows (struct rowset *rows, struct merge_fileset *fs, FTLOADER bl, int which_db, DB *dest_db, ft_compare_func);
 
 // This is probably only for testing.
-int toku_loader_write_ft_from_q_in_C (FTLOADER                 bl,
-				      const DESCRIPTOR         descriptor,
-				      int                      fd, // write to here
-				      int                      progress_allocation,
-				      QUEUE                    q,
-				      uint64_t                 total_disksize_estimate,
-                                      int                      which_db,
-                                      uint32_t                 target_nodesize,
-                                      uint32_t                 target_basementnodesize,
-                                      enum toku_compression_method target_compression_method,
-                                      uint32_t                 fanout);
+int toku_loader_write_ft_from_q_in_C(
+    FTLOADER bl,
+    const DESCRIPTOR descriptor,
+    int fd, // write to here
+    int progress_allocation,
+    QUEUE q,
+    uint64_t total_disksize_estimate,
+    int which_db,
+    uint32_t target_nodesize,
+    uint32_t target_basementnodesize,
+    enum toku_compression_method target_compression_method,
+    uint32_t fanout,
+    uint32_t pushdepth);
 
 int ft_loader_mergesort_row_array (struct row rows[/*n*/], int n, int which_db, DB *dest_db, ft_compare_func, FTLOADER, struct rowset *);
 
