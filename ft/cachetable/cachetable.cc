@@ -2631,6 +2631,10 @@ int toku_cachetable_unpin_and_remove (
     if (p->refcount > 0) {
         pair_wait_for_ref_release_unlocked(p);
     }
+    while (p->value_rwlock.users() > 0) {
+        p->value_rwlock.write_lock(true);
+        p->value_rwlock.write_unlock();
+    }
     if (p->value_rwlock.users() > 0) {
         // Need to wait for everyone else to leave
         // This write lock will be granted only after all waiting

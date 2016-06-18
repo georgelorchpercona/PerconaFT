@@ -74,47 +74,18 @@ public:
     uint32_t blocked_readers(void) const;
 
 private:
-    struct queue_item {
-        toku_cond_t *cond;
-        struct queue_item *next;
-    };
+    toku_mutex_t *_mutex;
+    toku_cond_t _wait_read;
+    toku_cond_t _wait_write;
 
-    bool queue_is_empty(void) const;
-    void enq_item(queue_item *const item);
-    toku_cond_t *deq_item(void);
-    void maybe_signal_or_broadcast_next(void);
-    void maybe_signal_next_writer(void);
-
-    toku_mutex_t *m_mutex;
-
-    uint32_t m_num_readers;
-    uint32_t m_num_writers;
-    uint32_t m_num_want_write;
-    uint32_t m_num_want_read;
-    uint32_t m_num_signaled_readers;
+    uint32_t _readers;
+    uint32_t _writers;
+    uint32_t _want_read;
+    uint32_t _want_write;
     // number of writers waiting that are expensive
     // MUST be < m_num_want_write
-    uint32_t m_num_expensive_want_write;
-    // bool that states if the current writer is expensive
-    // if there is no current writer, then is false
-    bool m_current_writer_expensive;
-    // bool that states if waiting for a read
-    // is expensive
-    // if there are currently no waiting readers, then set to false
-    bool m_read_wait_expensive;
-    // thread-id of the current writer
-    int m_current_writer_tid;
-    // context id describing the context of the current writer blocking
-    // new readers (either because this writer holds the write lock or
-    // is the first to want the write lock).
-    context_id m_blocking_writer_context_id;
-    
-    toku_cond_t m_wait_read;
-    queue_item m_queue_item_read;
-    bool m_wait_read_is_in_queue;
-
-    queue_item *m_wait_head;
-    queue_item *m_wait_tail;
+    uint32_t _expensive_want_write;
+    bool _current_writer_expensive;
 };
 
 ENSURE_POD(frwlock);
