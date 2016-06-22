@@ -1061,6 +1061,9 @@ bool toku_ftnode_nonleaf_is_gorged(FTNODE node, uint32_t nodesize) {
 
     bool buffers_are_empty = true;
     toku_ftnode_assert_fully_in_memory(node);
+
+    uint64_t max_buf_size =
+        2 * (nodesize / (node->n_children > 0 ? node->n_children : 1));
     //
     // the nonleaf node is gorged if the following holds true:
     //  - the buffers are non-empty
@@ -1070,7 +1073,11 @@ bool toku_ftnode_nonleaf_is_gorged(FTNODE node, uint32_t nodesize) {
     //
     paranoid_invariant(node->height > 0);
     for (int child = 0; child < node->n_children; ++child) {
-        size += BP_WORKDONE(node, child);
+        uint64_t buf_size = BP_WORKDONE(node, child);
+        if (buf_size >= max_buf_size) {
+            return true;
+        }
+        size += buf_size;
     }
     for (int child = 0; child < node->n_children; ++child) {
         if (toku_bnc_nbytesinbuf(BNC(node, child)) > 0) {
