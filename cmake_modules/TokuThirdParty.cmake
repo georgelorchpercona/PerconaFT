@@ -140,3 +140,38 @@ add_library(snappy STATIC IMPORTED)
 set_target_properties(snappy PROPERTIES IMPORTED_LOCATION
   "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/snappy/lib/libsnappy.a")
 add_dependencies(snappy build_snappy)
+
+
+## add lz4 with an external project
+set(LZ4_SOURCE_DIR "${TokuDB_SOURCE_DIR}/third_party/lz4" CACHE FILEPATH "Where to find sources for lz4.")
+if (NOT EXISTS "${LZ4_SOURCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "Can't find the lz4 sources.  Please check them out to ${LZ4_SOURCE_DIR} or modify LZ4_SOURCE_DIR.")
+endif ()
+
+FILE(GLOB LZ4_ALL_FILES ${LZ4_SOURCE_DIR}/*)
+ExternalProject_Add(build_lz4
+    PREFIX lz4
+    DOWNLOAD_COMMAND
+        cp -a "${LZ4_ALL_FILES}" "<SOURCE_DIR>/"
+    CMAKE_ARGS
+        -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
+        -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+        -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+        -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}
+        -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}
+        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        ${USE_PROJECT_CMAKE_MODULE_PATH}
+)
+FILE(GLOB_RECURSE LZ4_ALL_FILES_RECURSIVE ${LZ4_SOURCE_DIR}/*)
+ExternalProject_Add_Step(build_lz4 reclone_src # Names of project and custom step
+    COMMENT "(re)cloning lz4 source..."     # Text printed when step executes
+    DEPENDERS download configure   # Steps that depend on this step
+    DEPENDS   ${LZ4_ALL_FILES_RECURSIVE}   # Files on which this step depends
+)
+
+include_directories("${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lz4/include")
+
+add_library(lz4 STATIC IMPORTED)
+set_target_properties(lz4 PROPERTIES IMPORTED_LOCATION
+  "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lz4/lib/liblz4.a")
+add_dependencies(lz4 build_lz4)
