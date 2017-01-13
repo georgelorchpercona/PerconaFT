@@ -51,7 +51,6 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 #include "ft/serialize/rbuf.h"
 #include "ft/serialize/wbuf.h"
 #include "ft/serialize/block_allocator.h"
-#include "util/nb_mutex.h"
 #include "util/scoped_malloc.h"
 
 // indicates the end of a freelist
@@ -64,21 +63,31 @@ static const DISKOFF size_is_free = (DISKOFF)-1;
 // yet have a diskblock
 static const DISKOFF diskoff_unused = (DISKOFF)-2;
 
-void block_table::_mutex_lock() { toku_mutex_lock(&_mutex); }
+void block_table::_rwlock_read_lock() const { toku_rwlock_read_lock(&_rwlock); }
 
-void block_table::_mutex_unlock() { toku_mutex_unlock(&_mutex); }
+void block_table::_rwlock_write_lock() const {
+    toku_rwlock_write_lock(&_rwlock);
+}
+
+void block_table::_rwlock_unlock() const { toku_rwlock_unlock(&_rwlock); }
 
 // TODO: Move lock to FT
-void toku_ft_lock(FT ft) {
+void toku_ft_read_lock(FT ft) {
     block_table *bt = &ft->blocktable;
-    bt->_mutex_lock();
+    bt->_rwlock_read_lock();
+}
+
+// TODO: Move lock to FT
+void toku_ft_write_lock(FT ft) {
+    block_table *bt = &ft->blocktable;
+    bt->_rwlock_write_lock();
 }
 
 // TODO: Move lock to FT
 void toku_ft_unlock(FT ft) {
     block_table *bt = &ft->blocktable;
-    toku_mutex_assert_locked(&bt->_mutex);
-    bt->_mutex_unlock();
+    toku_rwlock_assert_locked(&bt->_rwlock);
+    bt->_rwlock_unlock();
 }
 
 // There are two headers: the reserve must fit them both and be suitably
@@ -97,10 +106,9 @@ void block_table::_create_internal() {
     memset(&_current, 0, sizeof(struct translation));
     memset(&_inprogress, 0, sizeof(struct translation));
     memset(&_checkpointed, 0, sizeof(struct translation));
-    memset(&_mutex, 0, sizeof(_mutex));
+    memset(&_rwlock, 0, sizeof(_rwlock));
     _bt_block_allocator = new BlockAllocator();
-    toku_mutex_init(&_mutex, nullptr);
-    nb_mutex_init(&_safe_file_size_lock);
+    toku_rwlock_init(&_rwlock, nullptr);
 }
 
 // Fill in the checkpointed translation from buffer, and copy checkpointed to
@@ -195,37 +203,31 @@ static void ft_set_dirty(FT ft, bool for_checkpoint) {
 }
 
 void block_table::_maybe_truncate_file(int fd, uint64_t size_needed_before) {
-    toku_mutex_assert_locked(&_mutex);
+    toku_rwlock_assert_write_locked(&_rwlock);
     uint64_t new_size_needed = _bt_block_allocator->AllocatedLimit();
     // Save a call to toku_os_get_file_size (kernel call) if unlikely to be
     // useful.
     if (new_size_needed < size_needed_before &&
         new_size_needed < _safe_file_size) {
-        nb_mutex_lock(&_safe_file_size_lock, &_mutex);
-
-        // Must hold _safe_file_size_lock to change _safe_file_size.
         if (new_size_needed < _safe_file_size) {
             int64_t safe_file_size_before = _safe_file_size;
             // Not safe to use the 'to-be-truncated' portion until truncate is
             // done.
             _safe_file_size = new_size_needed;
-            _mutex_unlock();
 
             uint64_t size_after;
             toku_maybe_truncate_file(
                 fd, new_size_needed, safe_file_size_before, &size_after);
-            _mutex_lock();
 
             _safe_file_size = size_after;
         }
-        nb_mutex_unlock(&_safe_file_size_lock);
     }
 }
 
 void block_table::maybe_truncate_file_on_open(int fd) {
-    _mutex_lock();
+    _rwlock_write_lock();
     _maybe_truncate_file(fd, _safe_file_size);
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
 void block_table::_copy_translation(struct translation *dst,
@@ -259,9 +261,9 @@ void block_table::_copy_translation(struct translation *dst,
         diskoff_unused;
 }
 
-int64_t block_table::get_blocks_in_use_unlocked() {
+int64_t block_table::get_blocks_in_use_unlocked() const {
     BLOCKNUM b;
-    struct translation *t = &_current;
+    const struct translation *t = &_current;
     int64_t num_blocks = 0;
     {
         // Reserved blocknums do not get upgraded; They are part of the header.
@@ -320,7 +322,7 @@ void block_table::_maybe_optimize_translation(struct translation *t) {
 
 // block table must be locked by caller of this function
 void block_table::note_start_checkpoint_unlocked() {
-    toku_mutex_assert_locked(&_mutex);
+    toku_rwlock_assert_write_locked(&_rwlock);
 
     // We're going to do O(n) work to copy the translation, so we
     // can afford to do O(n) work by optimizing the translation
@@ -335,10 +337,10 @@ void block_table::note_start_checkpoint_unlocked() {
 void block_table::note_skipped_checkpoint() {
     // Purpose, alert block translation that the checkpoint was skipped, e.x.
     // for a non-dirty header
-    _mutex_lock();
+    _rwlock_write_lock();
     paranoid_invariant_notnull(_inprogress.block_translation);
     _checkpoint_skipped = true;
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
 // Purpose: free any disk space used by previous checkpoint that isn't in use by
@@ -354,7 +356,7 @@ void block_table::note_skipped_checkpoint() {
 // inprogress = NULL
 void block_table::note_end_checkpoint(int fd) {
     // Free unused blocks
-    _mutex_lock();
+    _rwlock_write_lock();
     uint64_t allocated_limit_at_start = _bt_block_allocator->AllocatedLimit();
     paranoid_invariant_notnull(_inprogress.block_translation);
     if (_checkpoint_skipped) {
@@ -389,39 +391,42 @@ void block_table::note_end_checkpoint(int fd) {
         _maybe_truncate_file(fd, allocated_limit_at_start);
     }
 end:
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
-bool block_table::_is_valid_blocknum(struct translation *t, BLOCKNUM b) {
+bool block_table::_is_valid_blocknum(const struct translation *t,
+                                     BLOCKNUM b) const {
     invariant(t->length_of_array >= t->smallest_never_used_blocknum.b);
     return b.b >= 0 && b.b < t->smallest_never_used_blocknum.b;
 }
 
-void block_table::_verify_valid_blocknum(struct translation *UU(t),
-                                         BLOCKNUM UU(b)) {
+void block_table::_verify_valid_blocknum(const struct translation *UU(t),
+                                         BLOCKNUM UU(b)) const {
     invariant(_is_valid_blocknum(t, b));
 }
 
-bool block_table::_is_valid_freeable_blocknum(struct translation *t,
-                                              BLOCKNUM b) {
+bool block_table::_is_valid_freeable_blocknum(const struct translation *t,
+                                              BLOCKNUM b) const {
     invariant(t->length_of_array >= t->smallest_never_used_blocknum.b);
     return b.b >= RESERVED_BLOCKNUMS && b.b < t->smallest_never_used_blocknum.b;
 }
 
 // should be freeable
-void block_table::_verify_valid_freeable_blocknum(struct translation *UU(t),
-                                                  BLOCKNUM UU(b)) {
+void block_table::_verify_valid_freeable_blocknum(
+    const struct translation *UU(t),
+    BLOCKNUM UU(b)) const {
     invariant(_is_valid_freeable_blocknum(t, b));
 }
 
 // Also used only in ft-serialize-test.
 void block_table::block_free(uint64_t offset, uint64_t size) {
-    _mutex_lock();
+    _rwlock_write_lock();
     _bt_block_allocator->FreeBlock(offset, size);
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
-int64_t block_table::_calculate_size_on_disk(struct translation *t) {
+int64_t block_table::_calculate_size_on_disk(
+    const struct translation *t) const {
     return 8 +  // smallest_never_used_blocknum
            8 +  // blocknum_freelist_head
            t->smallest_never_used_blocknum.b * 16 +  // Array
@@ -443,7 +448,7 @@ void block_table::_realloc_on_disk_internal(BLOCKNUM b,
                                             DISKOFF *offset,
                                             FT ft,
                                             bool for_checkpoint) {
-    toku_mutex_assert_locked(&_mutex);
+    toku_rwlock_assert_write_locked(&_rwlock);
     ft_set_dirty(ft, for_checkpoint);
 
     struct translation *t = &_current;
@@ -479,22 +484,17 @@ void block_table::_realloc_on_disk_internal(BLOCKNUM b,
 void block_table::_ensure_safe_write_unlocked(int fd,
                                               DISKOFF block_size,
                                               DISKOFF block_offset) {
-    // Requires: holding _mutex
+    // Requires: holding _rwlock for write
+    toku_rwlock_assert_write_locked(&_rwlock);
     uint64_t size_needed = block_size + block_offset;
     if (size_needed > _safe_file_size) {
-        // Must hold _safe_file_size_lock to change _safe_file_size.
-        nb_mutex_lock(&_safe_file_size_lock, &_mutex);
         if (size_needed > _safe_file_size) {
-            _mutex_unlock();
-
             int64_t size_after;
             toku_maybe_preallocate_in_file(
                 fd, size_needed, _safe_file_size, &size_after);
 
-            _mutex_lock();
             _safe_file_size = size_after;
         }
-        nb_mutex_unlock(&_safe_file_size_lock);
     }
 }
 
@@ -504,16 +504,17 @@ void block_table::realloc_on_disk(BLOCKNUM b,
                                   FT ft,
                                   int fd,
                                   bool for_checkpoint) {
-    _mutex_lock();
+    _rwlock_write_lock();
     struct translation *t = &_current;
     _verify_valid_freeable_blocknum(t, b);
     _realloc_on_disk_internal(b, size, offset, ft, for_checkpoint);
 
     _ensure_safe_write_unlocked(fd, size, *offset);
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
-bool block_table::_pair_is_unallocated(struct block_translation_pair *pair) {
+bool block_table::_pair_is_unallocated(
+    const struct block_translation_pair *pair) const {
     return pair->size == 0 && pair->u.diskoff == diskoff_unused;
 }
 
@@ -524,7 +525,7 @@ bool block_table::_pair_is_unallocated(struct block_translation_pair *pair) {
 //   As a result, the allcoated space may be a little bit bigger (up to the next
 //   512-byte boundary) than the actual btt.
 void block_table::_alloc_inprogress_translation_on_disk_unlocked() {
-    toku_mutex_assert_locked(&_mutex);
+    toku_rwlock_assert_write_locked(&_rwlock);
 
     struct translation *t = &_inprogress;
     paranoid_invariant_notnull(t->block_translation);
@@ -554,7 +555,7 @@ void block_table::serialize_translation_to_wbuf(int fd,
                                                 struct wbuf *w,
                                                 int64_t *address,
                                                 int64_t *size) {
-    _mutex_lock();
+    _rwlock_write_lock();
     struct translation *t = &_inprogress;
 
     BLOCKNUM b = make_blocknum(RESERVED_BLOCKNUM_TRANSLATION);
@@ -600,15 +601,16 @@ void block_table::serialize_translation_to_wbuf(int fd,
     invariant((*address) % 512 == 0);
 
     _ensure_safe_write_unlocked(fd, size_aligned, *address);
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
 // Perhaps rename: purpose is get disk address of a block, given its blocknum
 // (blockid?)
-void block_table::_translate_blocknum_to_offset_size_unlocked(BLOCKNUM b,
-                                                              DISKOFF *offset,
-                                                              DISKOFF *size) {
-    struct translation *t = &_current;
+void block_table::_translate_blocknum_to_offset_size_unlocked(
+    BLOCKNUM b,
+    DISKOFF *offset,
+    DISKOFF *size) const {
+    const struct translation *t = &_current;
     _verify_valid_blocknum(t, b);
     if (offset) {
         *offset = t->block_translation[b.b].u.diskoff;
@@ -622,10 +624,10 @@ void block_table::_translate_blocknum_to_offset_size_unlocked(BLOCKNUM b,
 // (blockid?)
 void block_table::translate_blocknum_to_offset_size(BLOCKNUM b,
                                                     DISKOFF *offset,
-                                                    DISKOFF *size) {
-    _mutex_lock();
+                                                    DISKOFF *size) const {
+    _rwlock_read_lock();
     _translate_blocknum_to_offset_size_unlocked(b, offset, size);
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
 // Only called by toku_allocate_blocknum
@@ -646,7 +648,7 @@ void block_table::_maybe_expand_translation(struct translation *t) {
 }
 
 void block_table::_allocate_blocknum_unlocked(BLOCKNUM *res, FT ft) {
-    toku_mutex_assert_locked(&_mutex);
+    toku_rwlock_assert_write_locked(&_rwlock);
     BLOCKNUM result;
     struct translation *t = &_current;
     if (t->blocknum_freelist_head.b == freelist_null.b) {
@@ -672,9 +674,9 @@ void block_table::_allocate_blocknum_unlocked(BLOCKNUM *res, FT ft) {
 }
 
 void block_table::allocate_blocknum(BLOCKNUM *res, FT ft) {
-    _mutex_lock();
+    _rwlock_write_lock();
     _allocate_blocknum_unlocked(res, ft);
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
 void block_table::_free_blocknum_in_translation(struct translation *t,
@@ -692,7 +694,7 @@ void block_table::_free_blocknum_in_translation(struct translation *t,
 void block_table::_free_blocknum_unlocked(BLOCKNUM *bp,
                                           FT ft,
                                           bool for_checkpoint) {
-    toku_mutex_assert_locked(&_mutex);
+    toku_rwlock_assert_write_locked(&_rwlock);
     BLOCKNUM b = *bp;
     bp->b = 0;  // Remove caller's reference.
 
@@ -723,20 +725,20 @@ void block_table::_free_blocknum_unlocked(BLOCKNUM *bp,
 }
 
 void block_table::free_blocknum(BLOCKNUM *bp, FT ft, bool for_checkpoint) {
-    _mutex_lock();
+    _rwlock_write_lock();
     _free_blocknum_unlocked(bp, ft, for_checkpoint);
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
 // Verify there are no free blocks.
-void block_table::verify_no_free_blocknums() {
+void block_table::verify_no_free_blocknums() const {
     invariant(_current.blocknum_freelist_head.b == freelist_null.b);
 }
 
 // Frees blocknums that have a size of 0 and unused diskoff
 // Currently used for eliminating unused cached rollback log nodes
 void block_table::free_unused_blocknums(BLOCKNUM root) {
-    _mutex_lock();
+    _rwlock_write_lock();
     int64_t smallest = _current.smallest_never_used_blocknum.b;
     for (int64_t i = RESERVED_BLOCKNUMS; i < smallest; i++) {
         if (i == root.b) {
@@ -749,12 +751,12 @@ void block_table::free_unused_blocknums(BLOCKNUM root) {
             _free_blocknum_in_translation(&_current, b);
         }
     }
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
-bool block_table::_no_data_blocks_except_root(BLOCKNUM root) {
+bool block_table::_no_data_blocks_except_root(BLOCKNUM root) const {
     bool ok = true;
-    _mutex_lock();
+    _rwlock_read_lock();
     int64_t smallest = _current.smallest_never_used_blocknum.b;
     if (root.b < RESERVED_BLOCKNUMS) {
         ok = false;
@@ -771,33 +773,35 @@ bool block_table::_no_data_blocks_except_root(BLOCKNUM root) {
         }
     }
 cleanup:
-    _mutex_unlock();
+    _rwlock_unlock();
     return ok;
 }
 
 // Verify there are no data blocks except root.
 // TODO(leif): This actually takes a lock, but I don't want to fix all the
 // callers right now.
-void block_table::verify_no_data_blocks_except_root(BLOCKNUM UU(root)) {
+void block_table::verify_no_data_blocks_except_root(BLOCKNUM UU(root)) const {
     paranoid_invariant(_no_data_blocks_except_root(root));
 }
 
-bool block_table::_blocknum_allocated(BLOCKNUM b) {
-    _mutex_lock();
-    struct translation *t = &_current;
+bool block_table::_blocknum_allocated(BLOCKNUM b) const {
+    _rwlock_read_lock();
+    const struct translation *t = &_current;
     _verify_valid_blocknum(t, b);
     bool ok = t->block_translation[b.b].size != size_is_free;
-    _mutex_unlock();
+    _rwlock_unlock();
     return ok;
 }
 
 // Verify a blocknum is currently allocated.
-void block_table::verify_blocknum_allocated(BLOCKNUM UU(b)) {
+void block_table::verify_blocknum_allocated(BLOCKNUM UU(b)) const {
     paranoid_invariant(_blocknum_allocated(b));
 }
 
 // Only used by toku_dump_translation table (debug info)
-void block_table::_dump_translation_internal(FILE *f, struct translation *t) {
+void block_table::_dump_translation_internal(
+    FILE *f,
+    const struct translation *t) const {
     if (t->block_translation) {
         BLOCKNUM b = make_blocknum(RESERVED_BLOCKNUM_TRANSLATION);
         fprintf(f, " length_of_array[%" PRId64 "]", t->length_of_array);
@@ -828,9 +832,9 @@ void block_table::_dump_translation_internal(FILE *f, struct translation *t) {
 
 // Only used by toku_ft_dump which is only for debugging purposes
 // "pretty" just means we use tabs so we can parse output easier later
-void block_table::dump_translation_table_pretty(FILE *f) {
-    _mutex_lock();
-    struct translation *t = &_checkpointed;
+void block_table::dump_translation_table_pretty(FILE *f) const {
+    _rwlock_read_lock();
+    const struct translation *t = &_checkpointed;
     invariant(t->block_translation != nullptr);
     for (int64_t i = 0; i < t->length_of_array; ++i) {
         fprintf(f,
@@ -839,26 +843,26 @@ void block_table::dump_translation_table_pretty(FILE *f) {
                 t->block_translation[i].u.diskoff,
                 t->block_translation[i].size);
     }
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
 // Only used by toku_ft_dump which is only for debugging purposes
-void block_table::dump_translation_table(FILE *f) {
-    _mutex_lock();
+void block_table::dump_translation_table(FILE *f) const {
+    _rwlock_read_lock();
     fprintf(f, "Current block translation:");
     _dump_translation_internal(f, &_current);
     fprintf(f, "Checkpoint in progress block translation:");
     _dump_translation_internal(f, &_inprogress);
     fprintf(f, "Checkpointed block translation:");
     _dump_translation_internal(f, &_checkpointed);
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
 // Only used by ftdump
-void block_table::blocknum_dump_translation(BLOCKNUM b) {
-    _mutex_lock();
+void block_table::blocknum_dump_translation(BLOCKNUM b) const {
+    _rwlock_read_lock();
 
-    struct translation *t = &_current;
+    const struct translation *t = &_current;
     if (b.b < t->length_of_array) {
         struct block_translation_pair *bx = &t->block_translation[b.b];
         printf("%" PRId64 ": %" PRId64 " %" PRId64 "\n",
@@ -866,7 +870,7 @@ void block_table::blocknum_dump_translation(BLOCKNUM b) {
                bx->u.diskoff,
                bx->size);
     }
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
 // Must not call this function when anything else is using the blocktable.
@@ -879,8 +883,7 @@ void block_table::destroy(void) {
 
     _bt_block_allocator->Destroy();
     delete _bt_block_allocator;
-    toku_mutex_destroy(&_mutex);
-    nb_mutex_destroy(&_safe_file_size_lock);
+    toku_rwlock_destroy(&_rwlock);
 }
 
 int block_table::_translation_deserialize_from_buffer(
@@ -957,11 +960,11 @@ int block_table::iterate(enum translation_type type,
 
     struct translation *t = &fakecurrent;
     if (r == 0) {
-        _mutex_lock();
+        _rwlock_write_lock();
         _copy_translation(t, src, TRANSLATION_DEBUG);
         t->block_translation[RESERVED_BLOCKNUM_TRANSLATION] =
             src->block_translation[RESERVED_BLOCKNUM_TRANSLATION];
-        _mutex_unlock();
+        _rwlock_unlock();
         int64_t i;
         for (i = 0; i < t->smallest_never_used_blocknum.b; i++) {
             struct block_translation_pair pair = t->block_translation[i];
@@ -1010,7 +1013,7 @@ void block_table::internal_fragmentation(int64_t *total_sizep,
 void block_table::_realloc_descriptor_on_disk_unlocked(DISKOFF size,
                                                        DISKOFF *offset,
                                                        FT ft) {
-    toku_mutex_assert_locked(&_mutex);
+    toku_rwlock_assert_write_locked(&_rwlock);
     BLOCKNUM b = make_blocknum(RESERVED_BLOCKNUM_DESCRIPTOR);
     _realloc_on_disk_internal(b, size, offset, ft, false);
 }
@@ -1019,20 +1022,22 @@ void block_table::realloc_descriptor_on_disk(DISKOFF size,
                                              DISKOFF *offset,
                                              FT ft,
                                              int fd) {
-    _mutex_lock();
+    _rwlock_write_lock();
     _realloc_descriptor_on_disk_unlocked(size, offset, ft);
     _ensure_safe_write_unlocked(fd, size, *offset);
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
-void block_table::get_descriptor_offset_size(DISKOFF *offset, DISKOFF *size) {
-    _mutex_lock();
+void block_table::get_descriptor_offset_size(DISKOFF *offset,
+                                             DISKOFF *size) const {
+    _rwlock_write_lock();
     BLOCKNUM b = make_blocknum(RESERVED_BLOCKNUM_DESCRIPTOR);
     _translate_blocknum_to_offset_size_unlocked(b, offset, size);
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
-void block_table::get_fragmentation_unlocked(TOKU_DB_FRAGMENTATION report) {
+void block_table::get_fragmentation_unlocked(
+    TOKU_DB_FRAGMENTATION report) const {
     // Requires:  blocktable lock is held.
     // Requires:  report->file_size_bytes is already filled in.
 
@@ -1043,18 +1048,19 @@ void block_table::get_fragmentation_unlocked(TOKU_DB_FRAGMENTATION report) {
         BlockAllocator::BLOCK_ALLOCATOR_HEADER_RESERVE;
     report->checkpoint_blocks_additional = 1;
 
-    struct translation *current = &_current;
+    const struct translation *current = &_current;
     for (int64_t i = 0; i < current->length_of_array; i++) {
-        struct block_translation_pair *pair = &current->block_translation[i];
+        const struct block_translation_pair *pair =
+            &current->block_translation[i];
         if (pair->size > 0) {
             report->data_bytes += pair->size;
             report->data_blocks++;
         }
     }
 
-    struct translation *checkpointed = &_checkpointed;
+    const struct translation *checkpointed = &_checkpointed;
     for (int64_t i = 0; i < checkpointed->length_of_array; i++) {
-        struct block_translation_pair *pair =
+        const struct block_translation_pair *pair =
             &checkpointed->block_translation[i];
         if (pair->size > 0 &&
             !(i < current->length_of_array &&
@@ -1065,9 +1071,10 @@ void block_table::get_fragmentation_unlocked(TOKU_DB_FRAGMENTATION report) {
         }
     }
 
-    struct translation *inprogress = &_inprogress;
+    const struct translation *inprogress = &_inprogress;
     for (int64_t i = 0; i < inprogress->length_of_array; i++) {
-        struct block_translation_pair *pair = &inprogress->block_translation[i];
+        const struct block_translation_pair *pair =
+            &inprogress->block_translation[i];
         if (pair->size > 0 &&
             !(i < current->length_of_array &&
               current->block_translation[i].size > 0 &&
@@ -1084,10 +1091,10 @@ void block_table::get_fragmentation_unlocked(TOKU_DB_FRAGMENTATION report) {
     _bt_block_allocator->UnusedStatistics(report);
 }
 
-void block_table::get_info64(struct ftinfo64 *s) {
-    _mutex_lock();
+void block_table::get_info64(struct ftinfo64 *s) const {
+    _rwlock_read_lock();
 
-    struct translation *current = &_current;
+    const struct translation *current = &_current;
     s->num_blocks_allocated = current->length_of_array;
     s->num_blocks_in_use = 0;
     s->size_allocated = 0;
@@ -1107,7 +1114,7 @@ void block_table::get_info64(struct ftinfo64 *s) {
         }
     }
 
-    _mutex_unlock();
+    _rwlock_unlock();
 }
 
 int block_table::iterate_translation_tables(
@@ -1120,7 +1127,7 @@ int block_table::iterate_translation_tables(
                 void *extra),
     void *iter_extra) {
     int error = 0;
-    _mutex_lock();
+    _rwlock_write_lock();
 
     int64_t total_num_rows =
         _current.length_of_array + _checkpointed.length_of_array;
@@ -1144,6 +1151,6 @@ int block_table::iterate_translation_tables(
                      iter_extra);
     }
 
-    _mutex_unlock();
+    _rwlock_unlock();
     return error;
 }

@@ -57,7 +57,7 @@ toku_reset_root_xid_that_created(FT ft, TXNID new_root_xid_that_created) {
 
     // hold lock around setting and clearing of dirty bit
     // (see cooperative use of dirty bit in ft_begin_checkpoint())
-    toku_ft_lock(ft);
+    toku_ft_write_lock(ft);
     ft->h->root_xid_that_created = new_root_xid_that_created;
     ft->h->dirty = 1;
     toku_ft_unlock(ft);
@@ -145,7 +145,7 @@ ft_log_fassociate_during_checkpoint (CACHEFILE cf, void *header_v) {
 static void ft_begin_checkpoint (LSN checkpoint_lsn, void *header_v) {
     FT ft = (FT) header_v;
     // hold lock around copying and clearing of dirty bit
-    toku_ft_lock (ft);
+    toku_ft_write_lock (ft);
     assert(ft->h->type == FT_CURRENT);
     assert(ft->checkpoint_header == NULL);
     ft_copy_for_checkpoint_unlocked(ft, checkpoint_lsn);
@@ -520,7 +520,7 @@ toku_ft_note_hot_begin(FT_HANDLE ft_handle) {
 
     // hold lock around setting and clearing of dirty bit
     // (see cooperative use of dirty bit in ft_begin_checkpoint())
-    toku_ft_lock(ft);
+    toku_ft_write_lock(ft);
     ft->h->time_of_last_optimize_begin = now;
     ft->h->count_of_optimize_in_progress++;
     ft->h->dirty = 1;
@@ -535,7 +535,7 @@ toku_ft_note_hot_complete(FT_HANDLE ft_handle, bool success, MSN msn_at_start_of
     FT ft = ft_handle->ft;
     time_t now = time(NULL);
 
-    toku_ft_lock(ft);
+    toku_ft_write_lock(ft);
     ft->h->count_of_optimize_in_progress--;
     if (success) {
         ft->h->time_of_last_optimize_end = now;
@@ -958,53 +958,53 @@ void toku_ft_remove_reference(
 }
 
 void toku_ft_set_nodesize(FT ft, unsigned int nodesize) {
-    toku_ft_lock(ft);
+    toku_ft_write_lock(ft);
     ft->h->nodesize = nodesize;
     ft->h->dirty = 1;
     toku_ft_unlock(ft);
 }
 
 void toku_ft_get_nodesize(FT ft, unsigned int *nodesize) {
-    toku_ft_lock(ft);
+    toku_ft_read_lock(ft);
     *nodesize = ft->h->nodesize;
     toku_ft_unlock(ft);
 }
 
 void toku_ft_set_basementnodesize(FT ft, unsigned int basementnodesize) {
-    toku_ft_lock(ft);
+    toku_ft_write_lock(ft);
     ft->h->basementnodesize = basementnodesize;
     ft->h->dirty = 1;
     toku_ft_unlock(ft);
 }
 
 void toku_ft_get_basementnodesize(FT ft, unsigned int *basementnodesize) {
-    toku_ft_lock(ft);
+    toku_ft_read_lock(ft);
     *basementnodesize = ft->h->basementnodesize;
     toku_ft_unlock(ft);
 }
 
 void toku_ft_set_compression_method(FT ft, enum toku_compression_method method) {
-    toku_ft_lock(ft);
+    toku_ft_write_lock(ft);
     ft->h->compression_method = method;
     ft->h->dirty = 1;
     toku_ft_unlock(ft);
 }
 
 void toku_ft_get_compression_method(FT ft, enum toku_compression_method *methodp) {
-    toku_ft_lock(ft);
+    toku_ft_read_lock(ft);
     *methodp = ft->h->compression_method;
     toku_ft_unlock(ft);
 }
 
 void toku_ft_set_fanout(FT ft, unsigned int fanout) {
-    toku_ft_lock(ft);
+    toku_ft_write_lock(ft);
     ft->h->fanout = fanout;
     ft->h->dirty = 1;
     toku_ft_unlock(ft);
 }
 
 void toku_ft_get_fanout(FT ft, unsigned int *fanout) {
-    toku_ft_lock(ft);
+    toku_ft_read_lock(ft);
     *fanout = ft->h->fanout;
     toku_ft_unlock(ft);
 }

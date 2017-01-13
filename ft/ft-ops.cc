@@ -1589,7 +1589,7 @@ static void ft_verify_or_set_rightmost_blocknum(FT ft, BLOCKNUM b)
 // Given: 'b', the _definitive_ and constant rightmost blocknum of 'ft'
 {
     if (toku_unsafe_fetch(&ft->rightmost_blocknum.b) == RESERVED_BLOCKNUM_NULL) {
-        toku_ft_lock(ft);
+        toku_ft_write_lock(ft);
         if (ft->rightmost_blocknum.b == RESERVED_BLOCKNUM_NULL) {
             toku_unsafe_set(&ft->rightmost_blocknum, b);
         }
@@ -4572,7 +4572,7 @@ int toku_ft_rename_iname(DB_TXN *txn,
 
 int toku_ft_get_fragmentation(FT_HANDLE ft_handle, TOKU_DB_FRAGMENTATION report) {
     int fd = toku_cachefile_get_fd(ft_handle->ft->cf);
-    toku_ft_lock(ft_handle->ft);
+    toku_ft_read_lock(ft_handle->ft);
 
     int64_t file_size;
     int r = toku_os_get_file_size(fd, &file_size);

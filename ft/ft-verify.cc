@@ -509,7 +509,7 @@ toku_verify_ft_with_progress (FT_HANDLE ft_handle, int (*progress_callback)(void
     }
     int r = toku_verify_ftnode(ft_handle, ft_handle->ft->h->max_msn_in_ft, ft_handle->ft->h->max_msn_in_ft, false, root_node, -1, NULL, NULL, progress_callback, progress_extra, 1, verbose, keep_on_going);
     if (r == 0) {
-        toku_ft_lock(ft_handle->ft);
+        toku_ft_write_lock(ft_handle->ft);
         ft_handle->ft->h->time_of_last_verification = time(NULL);
         ft_handle->ft->h->dirty = 1;
         toku_ft_unlock(ft_handle->ft);

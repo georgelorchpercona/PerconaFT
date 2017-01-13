@@ -44,7 +44,6 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 #include "portability/toku_pthread.h"
 
 #include "ft/serialize/block_allocator.h"
-#include "util/nb_mutex.h"
 
 struct ft;
 
@@ -131,18 +130,18 @@ class block_table {
     void free_blocknum(BLOCKNUM *b, struct ft *ft, bool for_checkpoint);
     void translate_blocknum_to_offset_size(BLOCKNUM b,
                                            DISKOFF *offset,
-                                           DISKOFF *size);
+                                           DISKOFF *size) const;
     void free_unused_blocknums(BLOCKNUM root);
     void realloc_descriptor_on_disk(DISKOFF size,
                                     DISKOFF *offset,
                                     struct ft *ft,
                                     int fd);
-    void get_descriptor_offset_size(DISKOFF *offset, DISKOFF *size);
+    void get_descriptor_offset_size(DISKOFF *offset, DISKOFF *size) const;
 
     // External verfication
-    void verify_blocknum_allocated(BLOCKNUM b);
-    void verify_no_data_blocks_except_root(BLOCKNUM root);
-    void verify_no_free_blocknums();
+    void verify_blocknum_allocated(BLOCKNUM b) const;
+    void verify_no_data_blocks_except_root(BLOCKNUM root) const;
+    void verify_no_free_blocknums() const;
 
     // Serialization
     void serialize_translation_to_wbuf(int fd,
@@ -151,9 +150,9 @@ class block_table {
                                        int64_t *size);
 
     // DEBUG ONLY (ftdump included), tests included
-    void blocknum_dump_translation(BLOCKNUM b);
-    void dump_translation_table_pretty(FILE *f);
-    void dump_translation_table(FILE *f);
+    void blocknum_dump_translation(BLOCKNUM b) const;
+    void dump_translation_table_pretty(FILE *f) const;
+    void dump_translation_table(FILE *f) const;
     void block_free(uint64_t offset, uint64_t size);
 
     int iterate(enum translation_type type,
@@ -165,11 +164,11 @@ class block_table {
 
     // Requires: blocktable lock is held.
     // Requires: report->file_size_bytes is already filled in.
-    void get_fragmentation_unlocked(TOKU_DB_FRAGMENTATION report);
+    void get_fragmentation_unlocked(TOKU_DB_FRAGMENTATION report) const;
 
-    int64_t get_blocks_in_use_unlocked();
+    int64_t get_blocks_in_use_unlocked() const;
 
-    void get_info64(struct ftinfo64 *);
+    void get_info64(struct ftinfo64 *) const;
 
     int iterate_translation_tables(
         uint64_t,
@@ -233,10 +232,10 @@ class block_table {
                                        BLOCKNUM b,
                                        struct block_translation_pair *old_pair);
     void _free_blocknum_in_translation(struct translation *t, BLOCKNUM b);
-    int64_t _calculate_size_on_disk(struct translation *t);
-    bool _pair_is_unallocated(struct block_translation_pair *pair);
+    int64_t _calculate_size_on_disk(const struct translation *t) const;
+    bool _pair_is_unallocated(const struct block_translation_pair *pair) const;
     void _alloc_inprogress_translation_on_disk_unlocked();
-    void _dump_translation_internal(FILE *f, struct translation *t);
+    void _dump_translation_internal(FILE *f, const struct translation *t) const;
 
     // Blocknum management
     void _allocate_blocknum_unlocked(BLOCKNUM *res, struct ft *ft);
@@ -253,7 +252,7 @@ class block_table {
                                    bool for_checkpoint);
     void _translate_blocknum_to_offset_size_unlocked(BLOCKNUM b,
                                                      DISKOFF *offset,
-                                                     DISKOFF *size);
+                                                     DISKOFF *size) const;
 
     // File management
     void _maybe_truncate_file(int fd, uint64_t size_needed_before);
@@ -262,18 +261,21 @@ class block_table {
                                      DISKOFF block_offset);
 
     // Verification
-    bool _is_valid_blocknum(struct translation *t, BLOCKNUM b);
-    void _verify_valid_blocknum(struct translation *t, BLOCKNUM b);
-    bool _is_valid_freeable_blocknum(struct translation *t, BLOCKNUM b);
-    void _verify_valid_freeable_blocknum(struct translation *t, BLOCKNUM b);
-    bool _no_data_blocks_except_root(BLOCKNUM root);
-    bool _blocknum_allocated(BLOCKNUM b);
+    bool _is_valid_blocknum(const struct translation *t, BLOCKNUM b) const;
+    void _verify_valid_blocknum(const struct translation *t, BLOCKNUM b) const;
+    bool _is_valid_freeable_blocknum(const struct translation *t,
+                                     BLOCKNUM b) const;
+    void _verify_valid_freeable_blocknum(const struct translation *t,
+                                         BLOCKNUM b) const;
+    bool _no_data_blocks_except_root(BLOCKNUM root) const;
+    bool _blocknum_allocated(BLOCKNUM b) const;
 
     // Locking
     //
     // TODO: Move the lock to the FT
-    void _mutex_lock();
-    void _mutex_unlock();
+    void _rwlock_read_lock() const;
+    void _rwlock_write_lock() const;
+    void _rwlock_unlock() const;
 
     // The current translation is the one used by client threads.
     // It is not represented on disk.
@@ -296,13 +298,13 @@ class block_table {
     //       blocks are used for which translation, but simply allocates and
     //       deallocates blocks.
     BlockAllocator *_bt_block_allocator;
-    toku_mutex_t _mutex;
-    struct nb_mutex _safe_file_size_lock;
+    mutable toku_rwlock _rwlock;
     bool _checkpoint_skipped;
     uint64_t _safe_file_size;
 
     // Because the lock is in a weird place right now
-    friend void toku_ft_lock(struct ft *ft);
+    friend void toku_ft_read_lock(struct ft *ft);
+    friend void toku_ft_write_lock(struct ft *ft);
     friend void toku_ft_unlock(struct ft *ft);
 };
 

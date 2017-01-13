@@ -44,6 +44,8 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 
 #include "toku_assert.h"
 
+#include <atomic>
+
 typedef pthread_attr_t toku_pthread_attr_t;
 typedef pthread_t toku_pthread_t;
 typedef pthread_mutexattr_t toku_pthread_mutexattr_t;
@@ -330,6 +332,119 @@ toku_pthread_rwlock_wrunlock(toku_pthread_rwlock_t *rwlock) {
     int r = pthread_rwlock_unlock(rwlock);
     assert_zero(r);
 }
+
+static inline void
+toku_pthread_rwlock_unlock(toku_pthread_rwlock_t *rwlock) {
+    int r = pthread_rwlock_unlock(rwlock);
+    assert_zero(r);
+}
+
+typedef struct toku_rwlock {
+    pthread_rwlock_t prwlock;
+#if TOKU_PTHREAD_DEBUG
+    std::atomic<uint32_t> read_locks;
+    pthread_t write_owner; // = pthread_self(); // for debugging
+    bool valid;
+#endif
+} toku_rwlock_t;
+
+static inline void toku_rwlock_init(toku_rwlock_t *rwlock,
+                                    const toku_pthread_rwlockattr_t *attr) {
+    int r = pthread_rwlock_init(&rwlock->prwlock, attr);
+    assert_zero(r);
+#if TOKU_PTHREAD_DEBUG
+    rwlock->read_locks = 0;
+    rwlock->write_owner = 0;
+    invariant(!rwlock->valid);
+    rwlock->valid = true;
+#endif
+}
+
+static inline void toku_rwlock_destroy(toku_rwlock_t *rwlock) {
+#if TOKU_PTHREAD_DEBUG
+    invariant(rwlock->valid);
+    rwlock->valid = false;
+    invariant(rwlock->write_owner == 0 && rwlock->read_locks == 0);
+#endif
+    int r = pthread_rwlock_destroy(&rwlock->prwlock);
+    assert_zero(r);
+}
+
+static inline void toku_rwlock_read_lock(toku_rwlock_t *rwlock) {
+#if TOKU_PTHREAD_DEBUG
+    invariant(rwlock->valid);
+#endif
+    int r = pthread_rwlock_rdlock(&rwlock->prwlock);
+    assert_zero(r);
+#if TOKU_PTHREAD_DEBUG
+    rwlock->read_locks++;
+    invariant(rwlock->read_locks);
+    invariant(rwlock->write_owner == 0);
+#endif
+}
+
+static inline void toku_rwlock_write_lock(toku_rwlock_t *rwlock) {
+#if TOKU_PTHREAD_DEBUG
+    invariant(rwlock->valid);
+#endif
+    int r = pthread_rwlock_wrlock(&rwlock->prwlock);
+    assert_zero(r);
+#if TOKU_PTHREAD_DEBUG
+    invariant(rwlock->write_owner == 0);
+    invariant(rwlock->read_locks == 0);
+    rwlock->write_owner = pthread_self();
+#endif
+}
+
+static inline void toku_rwlock_unlock(toku_rwlock_t *rwlock) {
+#if TOKU_PTHREAD_DEBUG
+    invariant(rwlock->valid);
+    if (rwlock->write_owner > 0)
+        invariant(rwlock->write_owner == pthread_self());
+    else
+        invariant(rwlock->read_locks > 0);
+
+    if (rwlock->write_owner) {
+        rwlock->write_owner = 0;
+        invariant(rwlock->read_locks == 0);
+    } else if (rwlock->read_locks) {
+        rwlock->read_locks--;
+        invariant(rwlock->write_owner == 0);
+    }
+#endif
+    int r = pthread_rwlock_unlock(&rwlock->prwlock);
+    assert_zero(r);
+}
+
+#if TOKU_PTHREAD_DEBUG
+static inline void toku_rwlock_assert_write_locked(
+    const toku_rwlock_t *rwlock) {
+    invariant(rwlock->write_owner == pthread_self());
+    invariant(rwlock->read_locks == 0);
+}
+#else
+static inline void toku_rwlock_assert_write_locked(const toku_rwlock_t *rwlock
+                                                   __attribute__((unused))) {}
+#endif
+
+#if TOKU_PTHREAD_DEBUG
+static inline void toku_rwlock_assert_read_locked(const toku_rwlock_t *rwlock) {
+    invariant(rwlock->write_owner == 0);
+    invariant(rwlock->read_locks > 0);
+}
+#else
+static inline void toku_rwlock_assert_reed_locked(const toku_rwlock_t *rwlock
+                                                  __attribute__((unused))) {}
+#endif
+
+#if TOKU_PTHREAD_DEBUG
+static inline void toku_rwlock_assert_locked(const toku_rwlock_t *rwlock) {
+    invariant(rwlock->write_owner == pthread_self() || rwlock->read_locks > 0);
+}
+#else
+static inline void toku_rwlock_assert_locked(const toku_rwlock_t *rwlock
+                                             __attribute__((unused))) {}
+#endif
 
 static inline int 
 toku_pthread_create(toku_pthread_t *thread, const toku_pthread_attr_t *attr, void *(*start_function)(void *), void *arg) {
