@@ -97,6 +97,9 @@ if (BUILD_TESTING OR BUILD_FT_TESTS OR BUILD_SRC_TESTS)
   file(READ bash.suppressions bash_suppressions)
   file(APPEND "${CMAKE_CURRENT_BINARY_DIR}/valgrind.suppressions" "${bash_suppressions}")
 
+  ## copy tsan suppressions file
+  file(COPY tsan.suppressions DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+
   include(CMakeDependentOption)
   set(helgrind_drd_depend_conditions "")
   ## Helgrind and DRD explicitly state that they only run with the Linux
