@@ -44,6 +44,7 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 #include <util/kibbutz.h>
 #include <util/nb_mutex.h>
 #include <util/partitioned_counter.h>
+#include <atomic>
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -491,27 +492,38 @@ private:
     bool should_sleeping_clients_wakeup();
     bool eviction_needed();
 
-    // We have some intentional races with these variables because we're ok with reading something a little bit old.
-    // Provide some hooks for reading variables in an unsafe way so that there are function names we can stick in a valgrind suppression.
+    // We have some intentional races with these variables because we're ok with
+    // reading something a little bit old. Provide some hooks for reading
+    // variables in an unsafe way so that there are function names we can stick
+    // in a valgrind suppression.
     int64_t unsafe_read_size_current(void) const;
     int64_t unsafe_read_size_evicting(void) const;
 
-    pair_list* m_pl;
-    cachefile_list* m_cf_list;
-    int64_t m_size_current;            // the sum of the sizes of the pairs in the cachetable
-    int64_t m_size_cloned_data; // stores amount of cloned data we have, only used for engine status
+    pair_list *m_pl;
+    cachefile_list *m_cf_list;
+    std::atomic<int64_t>
+        m_size_current;  // the sum of the sizes of the pairs in the cachetable
+    int64_t m_size_cloned_data;  // stores amount of cloned data we have, only
+                                 // used for engine status
     // changes to these two values are protected
     // by ev_thread_lock
-    int64_t m_size_reserved;           // How much memory is reserved (e.g., by the loader)
-    int64_t m_size_evicting;           // the sum of the sizes of the pairs being written
+    int64_t
+        m_size_reserved;  // How much memory is reserved (e.g., by the loader)
+    std::atomic<int64_t>
+        m_size_evicting;  // the sum of the sizes of the pairs being written
 
     // these are constants
-    int64_t m_low_size_watermark; // target max size of cachetable that eviction thread aims for
-    int64_t m_low_size_hysteresis; // if cachetable grows to this size, client threads wake up eviction thread upon adding data
-    int64_t m_high_size_watermark; // if cachetable grows to this size, client threads sleep upon adding data
-    int64_t m_high_size_hysteresis; // if > cachetable size, then sleeping client threads may wake up
+    int64_t m_low_size_watermark;    // target max size of cachetable that
+                                     // eviction thread aims for
+    int64_t m_low_size_hysteresis;   // if cachetable grows to this size, client
+                                     // threads wake up eviction thread upon
+                                     // adding data
+    int64_t m_high_size_watermark;   // if cachetable grows to this size, client
+                                     // threads sleep upon adding data
+    int64_t m_high_size_hysteresis;  // if > cachetable size, then sleeping
+                                     // client threads may wake up
 
-    bool m_enable_partial_eviction; // true if partial evictions are permitted
+    bool m_enable_partial_eviction;  // true if partial evictions are permitted
 
     // used to calculate random numbers
     struct random_data m_random_data;
@@ -531,7 +543,7 @@ private:
     // in init, set to false during destroy
     bool m_run_thread;
     // bool that states if the eviction thread is currently running
-    bool m_ev_thread_is_running;
+    std::atomic_bool m_ev_thread_is_running;
     // period which the eviction thread sleeps
     uint32_t m_period_in_seconds;
     // condition variable on which client threads wait on when sleeping
