@@ -3608,6 +3608,8 @@ void pair_list::pair_unlock_by_fullhash(uint32_t fullhash) {
 }
 
 
+static_assert(std::is_trivial<evictor>::value, "evictor isn't trivial");
+static_assert(std::is_standard_layout<evictor>::value, "evictor isn't standard layout");
 ENSURE_POD(evictor);
 
 //
