@@ -131,5 +131,13 @@ check_c_source_compiles("#include <pthread.h>
 static __thread int tlsvar = 0;
 int main(void) { return tlsvar; }" HAVE_GNU_TLS)
 
+## look for lz4 if it happens to come in from Percona Server
+find_file(TOKU_HAVE_LZ4 lz4.h PATHS ${LZ4_INCLUDE_DIR} NO_DEFAULT_PATH)
+if(TOKU_HAVE_LZ4)
+  include_directories(${LZ4_INCLUDE_DIR})
+  add_definitions(-DTOKU_HAVE_LZ4=1)
+endif()
+
+
 ## set TOKUDB_REVISION
 set(CMAKE_TOKUDB_REVISION 0 CACHE INTEGER "Revision of tokudb.")

@@ -43,6 +43,10 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 #include <lzma.h>
 #include <snappy.h>
 
+#if defined(TOKU_HAVE_LZ4) && TOKU_HAVE_LZ4
+#include "lz4.h"
+#endif  // defined(TOKU_HAVE_LZ4) && TOKU_HAVE_LZ4
+
 #include "compress.h"
 #include "memory.h"
 #include "quicklz.h"
@@ -80,6 +84,10 @@ size_t toku_compress_bound (enum toku_compression_method a, size_t size)
         return 2+deflateBound(nullptr, size); // We need one extra for the rfc1950-style header byte, and one extra to store windowBits (a bit over cautious about future upgrades maybe).
     case TOKU_SNAPPY_METHOD:
         return (1 + snappy::MaxCompressedLength(size));
+#if defined(TOKU_HAVE_LZ4) && TOKU_HAVE_LZ4
+    case TOKU_LZ4_METHOD:
+        return (1 + LZ4_COMPRESSBOUND(size));
+#endif  // defined(TOKU_HAVE_LZ4) && TOKU_HAVE_LZ4
     default:
         break;
     }
@@ -176,6 +184,15 @@ void toku_compress (enum toku_compression_method a,
         dest[0] = TOKU_SNAPPY_METHOD;
         return;
     }
+#if defined(TOKU_HAVE_LZ4) && TOKU_HAVE_LZ4
+    case TOKU_LZ4_METHOD: {
+        int compressedLen = LZ4_compress_default(
+            (char *)source, (char *)dest + 1, sourceLen, *destLen);
+        *destLen = compressedLen + 1;
+        dest[0] = TOKU_LZ4_METHOD;
+        return;
+    }
+#endif  // defined(TOKU_HAVE_LZ4) && TOKU_HAVE_LZ4
     default:
         break;
     }
@@ -247,10 +264,19 @@ void toku_decompress (Bytef       *dest,   uLongf destLen,
         return;
     }
     case TOKU_SNAPPY_METHOD: {
-        bool r = snappy::RawUncompress((char*)source + 1, sourceLen - 1, (char*)dest);
+        bool r = snappy::RawUncompress(
+            (char *)source + 1, sourceLen - 1, (char *)dest);
         assert(r);
         return;
     }
+#if defined(TOKU_HAVE_LZ4) && TOKU_HAVE_LZ4
+    case TOKU_LZ4_METHOD: {
+        int r = LZ4_decompress_safe(
+            (char *)source + 1, (char *)dest, sourceLen - 1, destLen);
+        assert(r >= 0);
+        return;
+    }
+#endif  // defined(TOKU_HAVE_LZ4) && TOKU_HAVE_LZ4
     }
     // default fall through to error.
     assert(0);
