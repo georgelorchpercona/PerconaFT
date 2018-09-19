@@ -113,7 +113,7 @@ static inline void wbuf_nocrc_int (struct wbuf *w, int32_t i) {
     w->buf[w->ndone+2] = i>>8;
     w->buf[w->ndone+3] = i>>0;
  #else
-    *(uint32_t*)(&w->buf[w->ndone]) = toku_htod32(i);
+    toku_unaligned_store<uint32_t>(&w->buf[w->ndone], toku_htod32(i));
  #endif
     w->ndone += 4;
 #endif
@@ -145,7 +145,7 @@ static inline void wbuf_nocrc_literal_bytes(struct wbuf *w, const void *bytes_bv
     { int i; for (i=0; i<nbytes; i++) wbuf_nocrc_char(w, bytes[i]); }
 #else
     assert(w->ndone + nbytes <= w->size);
-    memcpy(w->buf + w->ndone, bytes, (size_t)nbytes);
+    toku_memcpy(w->buf + w->ndone, bytes, (size_t)nbytes);
     w->ndone += nbytes;
 #endif
 }
