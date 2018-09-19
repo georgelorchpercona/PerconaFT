@@ -359,7 +359,7 @@ void bn_data::dmt_compress_kvspace(size_t added_size, void **maybe_free, bool fo
         toku_mempool_construct(&new_kvspace, total_size_needed);
         size_t old_offset_limit = toku_mempool_get_offset_limit(&m_buffer_mempool);
         void *new_mempool_base = toku_mempool_malloc(&new_kvspace, old_offset_limit);
-        memcpy(new_mempool_base, old_mempool_base, old_offset_limit);
+        toku_memcpy(new_mempool_base, old_mempool_base, old_offset_limit);
     }
 
     if (maybe_free) {
