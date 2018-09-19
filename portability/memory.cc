@@ -440,7 +440,7 @@ toku_malloc_usable_size(void *p) {
 void *
 toku_xmemdup (const void *v, size_t len) {
     void *p = toku_xmalloc(len);
-    memcpy(p, v, len);
+    toku_memcpy(p, v, len);
     return p;
 }
 
