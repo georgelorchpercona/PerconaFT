@@ -47,7 +47,7 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 
 namespace toku {
 
-    scoped_malloc::scoped_malloc(const size_t size)
+    scoped_malloc::scoped_malloc(size_t size)
         : m_size(size),
           m_local(false),
           m_buf(toku_xmalloc(size)) {}

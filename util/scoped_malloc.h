@@ -45,7 +45,7 @@ namespace toku {
     class scoped_malloc {
     public:
         // Memory is allocated from thread-local storage if available, otherwise from malloc(3).
-        scoped_malloc(const size_t size);
+        scoped_malloc(size_t size);
 
         ~scoped_malloc();
 
@@ -65,7 +65,7 @@ namespace toku {
     class scoped_calloc : public scoped_malloc {
     public:
         // A scoped malloc whose bytes are initialized to zero, as in calloc(3)
-        scoped_calloc(const size_t size) :
+        scoped_calloc(size_t size) :
             scoped_malloc(size) {
             memset(scoped_malloc::get(), 0, size);
         }
@@ -73,7 +73,7 @@ namespace toku {
 
     class scoped_malloc_aligned : public scoped_malloc {
     public:
-        scoped_malloc_aligned(const size_t size, const size_t alignment) :
+        scoped_malloc_aligned(size_t size, size_t alignment) :
             scoped_malloc(size + alignment) {
             invariant(size >= alignment);
             invariant(alignment > 0);
@@ -90,6 +90,16 @@ namespace toku {
     private:
         void *m_aligned_buf;
     };
+
+    class scoped_calloc_aligned : public scoped_malloc_aligned {
+    public:
+        // A scoped malloc whose bytes are initialized to zero, as in calloc(3)
+        scoped_calloc_aligned(size_t size, size_t alignment) :
+            scoped_malloc_aligned(size, alignment) {
+            memset(scoped_malloc_aligned::get(), 0, size);
+        }
+    };
+
 
 } // namespace toku
 

@@ -116,9 +116,12 @@ void toku_compress (enum toku_compression_method a,
             assert(1 <= *destLen);
             *destLen = 1;
         } else {
-            toku::scoped_calloc qsc_buf(sizeof(qlz_state_compress));
-            qlz_state_compress *qsc = reinterpret_cast<qlz_state_compress *>(qsc_buf.get());
-            size_t actual_destlen = qlz_compress(source, (char*)(dest+1), sourceLen, qsc);
+            toku::scoped_calloc_aligned qsc_buf(sizeof(qlz_state_compress),
+                                                alignof(qlz_state_compress));
+            qlz_state_compress *qsc =
+                reinterpret_cast<qlz_state_compress *>(qsc_buf.get());
+            size_t actual_destlen =
+                qlz_compress(source, (char *)(dest + 1), sourceLen, qsc);
             assert(actual_destlen + 1 <= *destLen);
             // add one for the rfc1950-style header byte.
             *destLen = actual_destlen + 1;

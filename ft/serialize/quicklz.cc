@@ -49,6 +49,8 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 
 #include "quicklz.h"
 
+#include "portability/memory.h"
+
 #if QLZ_VERSION_MAJOR != 1 || QLZ_VERSION_MINOR != 5 || QLZ_VERSION_REVISION != 0
 	#error quicklz.c and quicklz.h have different versions
 #endif
@@ -151,7 +153,7 @@ static __inline ui32 fast_read(void const *src, ui32 bytes)
 	return 0;
 #else
 	if (bytes >= 1 && bytes <= 4)
-		return *((ui32*)src);
+		return toku_unaligned_load<ui32>(src);
 	else
 		return 0;
 #endif
@@ -195,13 +197,13 @@ static __inline void fast_write(ui32 f, void *dst, size_t bytes)
 	switch (bytes)
 	{
 		case 4: 
-			*((ui32*)dst) = f;
+			toku_unaligned_store<ui32>(dst, f);
 			return;
 		case 3:
-			*((ui32*)dst) = f;
+			toku_unaligned_store<ui32>(dst, f);
 			return;
 		case 2:
-			*((ui16 *)dst) = (ui16)f;
+			toku_unaligned_store<ui16>(dst, f);
 			return;
 		case 1:
 			*((unsigned char*)dst) = (unsigned char)f;
@@ -240,7 +242,6 @@ size_t qlz_size_header(const char *source)
 static __inline void memcpy_up(unsigned char *dst, const unsigned char *src, ui32 n)
 {
 	// Caution if modifying memcpy_up! Overlap of dst and src must be special handled.
-#ifndef X86X64
 	unsigned char *end = dst + n;
 	while(dst < end)
 	{
@@ -248,15 +249,6 @@ static __inline void memcpy_up(unsigned char *dst, const unsigned char *src, ui3
 		dst++;
 		src++;
 	}
-#else
-	ui32 f = 0;
-	do
-	{
-		*(ui32 *)(dst + f) = *(ui32 *)(src + f);
-		f += MINOFFSET + 1;
-	}
-	while (f < n);
-#endif
 }
 
 __attribute__((unused))
@@ -724,11 +716,7 @@ static size_t qlz_decompress_core(const unsigned char *source, unsigned char *de
 			if (dst < last_matchstart)
 			{
 				unsigned int n = bitlut[cword_val & 0xf];
-#ifdef X86X64
-				*(ui32 *)dst = *(ui32 *)src;
-#else
-				memcpy_up(dst, src, 4);
-#endif
+				memcpy_up(dst, src, sizeof(ui32));
 				cword_val = cword_val >> n;
 				dst += n;
 				src += n;
