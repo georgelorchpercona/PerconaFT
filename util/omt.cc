@@ -542,8 +542,9 @@ void omt<omtdata_t, omtdataout_t, supports_marks>::maybe_resize_array(const uint
 
     if (room < n || this->capacity / 2 >= new_size) {
         omtdata_t *XMALLOC_N(new_size, tmp_values);
-        memcpy(tmp_values, &this->d.a.values[this->d.a.start_idx],
-               this->d.a.num_values * (sizeof tmp_values[0]));
+        toku_memcpy(tmp_values,
+                    &this->d.a.values[this->d.a.start_idx],
+                    this->d.a.num_values * (sizeof tmp_values[0]));
         this->d.a.start_idx = 0;
         this->capacity = new_size;
         toku_free(this->d.a.values);
