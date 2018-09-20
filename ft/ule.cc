@@ -904,16 +904,14 @@ void le_unpack(ULE ule, LEAFENTRY le) {
 }
 
 static inline size_t uxr_pack_txnid(UXR uxr, uint8_t *p) {
-    *(TXNID*)p = toku_htod64(uxr->xid);
-    return sizeof(TXNID);
+    return toku_unaligned_store<TXNID>(p, toku_htod64(uxr->xid));
 }
 
 static inline size_t uxr_pack_type_and_length(UXR uxr, uint8_t *p) {
     size_t rval = 1;
     *p = uxr->type;
     if (uxr_is_insert(uxr)) {
-        *(uint32_t*)(p+1) = toku_htod32(uxr->vallen);
-        rval += sizeof(uint32_t);
+        rval += toku_unaligned_store<uint32_t>(p+1, toku_htod32(uxr->vallen));
     }
     return rval;
 }
@@ -925,20 +923,19 @@ static inline size_t uxr_pack_length_and_bit(UXR uxr, uint8_t *p) {
     } else {
         length_and_bit = DELETE_LENGTH(uxr->vallen);
     }
-    *(uint32_t*)p = toku_htod32(length_and_bit);
-    return sizeof(uint32_t);
+    return toku_unaligned_store<uint32_t>(p, toku_htod32(length_and_bit));
 }
 
 static inline size_t uxr_pack_data(UXR uxr, uint8_t *p) {
     if (uxr_is_insert(uxr)) {
-        memcpy(p, uxr->valp, uxr->vallen);
+        toku_memcpy(p, uxr->valp, uxr->vallen);
         return uxr->vallen;
     }
     return 0;
 }
 
 static inline size_t uxr_unpack_txnid(UXR uxr, uint8_t *p) {
-    uxr->xid = toku_dtoh64(*(TXNID*)p);
+    uxr->xid = toku_unaligned_load<TXNID>(p);
     return sizeof(TXNID);
 }
 
@@ -946,14 +943,14 @@ static inline size_t uxr_unpack_type_and_length(UXR uxr, uint8_t *p) {
     size_t rval = 1;
     uxr->type = *p;
     if (uxr_is_insert(uxr)) {
-        uxr->vallen = toku_dtoh32(*(uint32_t*)(p+1));
+        uxr->vallen = toku_dtoh32(toku_unaligned_load<uint32_t>(p+1));
         rval += sizeof(uint32_t);
     }
     return rval;
 }
 
 static inline size_t uxr_unpack_length_and_bit(UXR uxr, uint8_t *p) {
-    uint32_t length_and_bit = toku_dtoh32(*(uint32_t*)p);
+    uint32_t length_and_bit = toku_dtoh32(toku_unaligned_load<uint32_t>(p));
     if (IS_INSERT(length_and_bit)) {
         uxr->type = XR_INSERT;
         uxr->vallen = GET_LENGTH(length_and_bit);
@@ -2111,7 +2108,7 @@ static int le_iterate_get_accepted_index(
     // if this for loop does not return anything, we return num_xids-1, which
     // should map to T_0
     for (i = 0; i < num_xids - 1; i++) {
-        TXNID xid = toku_dtoh64(xids[i]);
+        TXNID xid = toku_dtoh64(toku_unaligned_load<TXNID>(xids + i));
         r = f(xid, context, (i == 0 && top_is_provisional));
         if (r==TOKUDB_ACCEPT) {
             r = 0;
@@ -2210,10 +2207,9 @@ static int le_iterate_is_del(
             //Skip TXNIDs
             p += (num_interesting - 1)*sizeof(TXNID);
 
-            uint32_t *length_and_bits;
-            length_and_bits  = (uint32_t*)p;
             uint32_t my_length_and_bit;
-            my_length_and_bit = toku_dtoh32(length_and_bits[index]);
+            my_length_and_bit = toku_dtoh32(
+                toku_unaligned_load<uint32_t>(p + (index * sizeof(uint32_t))));
             is_del = !IS_INSERT(my_length_and_bit);
 #if ULE_DEBUG
             {
