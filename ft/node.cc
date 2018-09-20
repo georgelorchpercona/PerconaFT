@@ -857,7 +857,8 @@ void toku_ftnode_leaf_rebalance(FTNODE node, unsigned int basementnodesize) {
     uint32_t *key_sizes = reinterpret_cast<uint32_t *>(key_sizes_buf.get());
 
     // Capture pointers to old mempools' buffers (so they can be destroyed)
-    toku::scoped_malloc old_bns_buf(sizeof(BASEMENTNODE) * num_orig_basements);
+    toku::scoped_malloc_aligned old_bns_buf(
+        sizeof(BASEMENTNODE) * num_orig_basements, alignof(BASEMENTNODE));
     BASEMENTNODE *old_bns = reinterpret_cast<BASEMENTNODE *>(old_bns_buf.get());
     old_bns[0] = NULL;
 
