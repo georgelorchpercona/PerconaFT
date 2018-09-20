@@ -64,6 +64,8 @@ public:
     //  In case of ENOMEM, aborts.
     void *malloc_from_arena(size_t size);
 
+    void *malloc_from_arena_aligned(size_t size, size_t alignment);
+
     // Effect: Move all the memory from this memarena into DEST. 
     //         When SOURCE is closed the memory won't be freed. 
     //         When DEST is closed, the memory will be freed, unless DEST moves its memory to another memarena...

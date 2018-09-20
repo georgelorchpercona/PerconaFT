@@ -684,7 +684,7 @@ generate_rollbacks (void) {
                     }
                     fprintf(cf, "  struct roll_entry *v;\n");
                     fprintf(cf, "  size_t mem_needed = sizeof(v->u.%s) + __builtin_offsetof(struct roll_entry, u.%s);\n", lt->name, lt->name);
-                    fprintf(cf, "  CAST_FROM_VOIDP(v, toku_malloc_in_rollback(log, mem_needed));\n");
+                    fprintf(cf, "  CAST_FROM_VOIDP(v, toku_malloc_in_rollback_aligned(log, mem_needed, alignof(v->u.%s)));\n", lt->name);
                     fprintf(cf, "  assert(v);\n");
                     fprintf(cf, "  v->cmd = (enum rt_cmd)%u;\n", lt->command_and_flags&0xff);
                     DO_FIELDS(field_type, lt, fprintf(cf, "  v->u.%s.%s = %s;\n", lt->name, field_type->name, field_type->name));
@@ -762,7 +762,7 @@ generate_rollbacks (void) {
     DO_ROLLBACKS(lt, {
                 fprintf(cf, "  case RT_%s:\n", lt->name);
                 fprintf(cf, "    mem_needed = sizeof(item->u.%s) + __builtin_offsetof(struct roll_entry, u.%s);\n", lt->name, lt->name);
-                fprintf(cf, "    CAST_FROM_VOIDP(item, ma->malloc_from_arena(mem_needed));\n");
+                fprintf(cf, "    CAST_FROM_VOIDP(item, ma->malloc_from_arena_aligned(mem_needed, alignof(item->u.%s)));\n", lt->name);
                 fprintf(cf, "    item->cmd = cmd;\n");
                 DO_FIELDS(field_type, lt, fprintf(cf, "    rbuf_ma_%s(&rc, ma, &item->u.%s.%s);\n", field_type->type, lt->name, field_type->name));
                 fprintf(cf, "    *itemp = item;\n");

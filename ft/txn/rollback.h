@@ -71,6 +71,7 @@ void toku_maybe_prefetch_previous_rollback_log(TOKUTXN txn, ROLLBACK_LOG_NODE lo
 void toku_rollback_log_unpin_and_remove(TOKUTXN txn, ROLLBACK_LOG_NODE log);
 
 void *toku_malloc_in_rollback(ROLLBACK_LOG_NODE log, size_t size);
+void *toku_malloc_in_rollback_aligned(ROLLBACK_LOG_NODE log, size_t size, size_t alignment);
 void *toku_memdup_in_rollback(ROLLBACK_LOG_NODE log, const void *v, size_t len);
 
 // given a transaction and a log node, and if the log is too full,

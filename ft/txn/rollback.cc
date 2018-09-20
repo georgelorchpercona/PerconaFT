@@ -69,6 +69,10 @@ void *toku_malloc_in_rollback(ROLLBACK_LOG_NODE log, size_t size) {
     return log->rollentry_arena.malloc_from_arena(size);
 }
 
+void *toku_malloc_in_rollback_aligned(ROLLBACK_LOG_NODE log, size_t size, size_t alignment) {
+    return log->rollentry_arena.malloc_from_arena_aligned(size, alignment);
+}
+
 // TODO: fix this name
 //       toku_rollback_memdup
 void *toku_memdup_in_rollback(ROLLBACK_LOG_NODE log, const void *v, size_t len) {

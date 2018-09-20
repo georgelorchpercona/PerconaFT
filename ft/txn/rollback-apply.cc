@@ -108,7 +108,7 @@ static int apply_txn(TOKUTXN txn, LSN lsn, apply_rollback_item func) {
         last_sequence = log->sequence;
         if (func) {
             while ((item=log->newest_logentry)) {
-                log->newest_logentry = item->prev;
+                toku_memcpy(log->newest_logentry, item->prev, sizeof(struct roll_entry*));
                 r = func(txn, item, lsn);
                 if (r!=0) return r;
             }

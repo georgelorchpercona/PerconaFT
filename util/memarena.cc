@@ -115,6 +115,13 @@ void *memarena::malloc_from_arena(size_t size) {
     return p;
 }
 
+void *memarena::malloc_from_arena_aligned(size_t size, size_t alignment) {
+    void *p = malloc_from_arena(size + alignment);
+    uintptr_t addr = reinterpret_cast<uintptr_t>(p);
+    uintptr_t aligned_addr = (addr + alignment) - (addr % alignment);
+    return reinterpret_cast<void *>(aligned_addr);
+}
+
 void memarena::move_memory(memarena *dest) {
     // Move memory to dest
     XREALLOC_N(dest->_n_other_chunks + _n_other_chunks + 1, dest->_other_chunks);
