@@ -193,5 +193,5 @@ void toku_mempool_clone(const struct mempool* orig_mp, struct mempool* new_mp) {
     new_mp->free_offset = orig_mp->free_offset;
     new_mp->size = orig_mp->free_offset; // only make the cloned mempool store what is needed
     new_mp->base = toku_xmalloc_aligned(64, new_mp->size);
-    memcpy(new_mp->base, orig_mp->base, new_mp->size);
+    toku_memcpy(new_mp->base, orig_mp->base, new_mp->size);
 }
