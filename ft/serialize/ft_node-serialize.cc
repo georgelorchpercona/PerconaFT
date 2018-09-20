@@ -388,8 +388,8 @@ compress_ftnode_sub_block(struct sub_block *sb, enum toku_compression_method met
 
     uint32_t* extra = (uint32_t *)(sb->compressed_ptr);
     // store the compressed and uncompressed size at the beginning
-    extra[0] = toku_htod32(sb->compressed_size);
-    extra[1] = toku_htod32(sb->uncompressed_size);
+    toku_unaligned_store<uint32_t>(&extra[0], toku_htod32(sb->compressed_size));
+    toku_unaligned_store<uint32_t>(&extra[1], toku_htod32(sb->uncompressed_size));
     // now checksum the entire thing
     sb->compressed_size += 8; // now add the eight bytes that we saved for the sizes
     sb->xsum = toku_x1764_memory(sb->compressed_ptr,sb->compressed_size);
@@ -748,15 +748,15 @@ int toku_serialize_ftnode_to_memory(FTNODE node,
     memcpy(curr_ptr, sb_node_info.compressed_ptr, sb_node_info.compressed_size);
     curr_ptr += sb_node_info.compressed_size;
     // write the checksum
-    *(uint32_t *)curr_ptr = toku_htod32(sb_node_info.xsum);
-    curr_ptr += sizeof(sb_node_info.xsum);
+    curr_ptr +=
+        toku_unaligned_store<uint32_t>(curr_ptr, toku_htod32(sb_node_info.xsum));
 
     for (int i = 0; i < npartitions; i++) {
         memcpy(curr_ptr, sb[i].compressed_ptr, sb[i].compressed_size);
         curr_ptr += sb[i].compressed_size;
         // write the checksum
-        *(uint32_t *)curr_ptr = toku_htod32(sb[i].xsum);
-        curr_ptr += sizeof(sb[i].xsum);
+        curr_ptr +=
+            toku_unaligned_store<uint32_t>(curr_ptr, toku_htod32(sb[i].xsum));
     }
     // Zero the rest of the buffer
     memset(data + total_node_size, 0, total_buffer_size - total_node_size);
