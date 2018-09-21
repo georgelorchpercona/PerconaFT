@@ -68,8 +68,8 @@ cachetable_put_empty_node_with_dep_nodes(
     FTNODE* result)
 {
     FTNODE XCALLOC(new_node);
-    PAIR dependent_pairs[num_dependent_nodes];
-    enum cachetable_dirty dependent_dirty_bits[num_dependent_nodes];
+    std::vector<PAIR> dependent_pairs(num_dependent_nodes);
+    std::vector<enum cachetable_dirty> dependent_dirty_bits(num_dependent_nodes);
     for (uint32_t i = 0; i < num_dependent_nodes; i++) {
         dependent_pairs[i] = dependent_nodes[i]->ct_pair;
         dependent_dirty_bits[i] = (enum cachetable_dirty) dependent_nodes[i]->dirty;
@@ -82,7 +82,6 @@ cachetable_put_empty_node_with_dep_nodes(
         make_pair_attr(sizeof(FTNODE)),
         get_write_callbacks_for_node(ft),
         ft,
-        num_dependent_nodes,
         dependent_pairs,
         dependent_dirty_bits,
         blocknum,
@@ -262,21 +261,18 @@ exit:
     return r;
 }
 
-void
-toku_pin_ftnode_with_dep_nodes(
-    FT ft,
-    BLOCKNUM blocknum,
-    uint32_t fullhash,
-    ftnode_fetch_extra *bfe,
-    pair_lock_type lock_type,
-    uint32_t num_dependent_nodes,
-    FTNODE *dependent_nodes,
-    FTNODE *node_p,
-    bool move_messages)
-{
+void toku_pin_ftnode_with_dep_nodes(FT ft,
+                                    BLOCKNUM blocknum,
+                                    uint32_t fullhash,
+                                    ftnode_fetch_extra *bfe,
+                                    pair_lock_type lock_type,
+                                    uint32_t num_dependent_nodes,
+                                    FTNODE *dependent_nodes,
+                                    FTNODE *node_p,
+                                    bool move_messages) {
     void *node_v;
-    PAIR dependent_pairs[num_dependent_nodes];
-    enum cachetable_dirty dependent_dirty_bits[num_dependent_nodes];
+    std::vector<PAIR> dependent_pairs(num_dependent_nodes);
+    std::vector<enum cachetable_dirty> dependent_dirty_bits(num_dependent_nodes);
     for (uint32_t i = 0; i < num_dependent_nodes; i++) {
         dependent_pairs[i] = dependent_nodes[i]->ct_pair;
         dependent_dirty_bits[i] = (enum cachetable_dirty) dependent_nodes[i]->dirty;
@@ -293,10 +289,8 @@ toku_pin_ftnode_with_dep_nodes(
         toku_ftnode_pf_callback,
         lock_type,
         bfe,
-        num_dependent_nodes,
         dependent_pairs,
-        dependent_dirty_bits
-        );
+        dependent_dirty_bits);
     invariant_zero(r);
     FTNODE node = (FTNODE) node_v;
     if (lock_type != PL_READ && node->height > 0 && move_messages) {

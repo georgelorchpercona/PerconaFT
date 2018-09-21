@@ -39,6 +39,7 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 #pragma once
 
 #include <fcntl.h>
+#include <vector>
 
 #include "ft/logger/logger.h"
 #include "ft/serialize/block_table.h"
@@ -319,13 +320,12 @@ void toku_cachetable_put_with_dep_pairs(
     PAIR_ATTR attr,
     CACHETABLE_WRITE_CALLBACK write_callback,
     void *get_key_and_fullhash_extra,
-    uint32_t num_dependent_pairs, // number of dependent pairs that we may need to checkpoint
-    PAIR* dependent_pairs,
-    enum cachetable_dirty* dependent_dirty, // array stating dirty/cleanness of dependent pairs
-    CACHEKEY* key,
-    uint32_t* fullhash,
-    CACHETABLE_PUT_CALLBACK put_callback
-    );
+    const std::vector<PAIR> &dependent_pairs,
+    // array stating dirty/cleanness of dependent pairs
+    const std::vector<enum cachetable_dirty>& dependent_dirty,
+    CACHEKEY *key,
+    uint32_t *fullhash,
+    CACHETABLE_PUT_CALLBACK put_callback);
 
 // Put a memory object into the cachetable.
 // Effects: Lookup the key in the cachetable. If the key is not in the cachetable,
@@ -347,21 +347,21 @@ void toku_cachetable_put(CACHEFILE cf, CACHEKEY key, uint32_t fullhash,
 // then the required PAIRs are written to disk for checkpoint.
 // KEY PROPERTY OF DEPENDENT PAIRS: They are already locked by the client
 // Returns: 0 if the memory object is in memory, otherwise an error number.
-int toku_cachetable_get_and_pin_with_dep_pairs (
+int toku_cachetable_get_and_pin_with_dep_pairs(
     CACHEFILE cachefile,
     CACHEKEY key,
     uint32_t fullhash,
-    void**value,
+    void **value,
     CACHETABLE_WRITE_CALLBACK write_callback,
     CACHETABLE_FETCH_CALLBACK fetch_callback,
     CACHETABLE_PARTIAL_FETCH_REQUIRED_CALLBACK pf_req_callback,
     CACHETABLE_PARTIAL_FETCH_CALLBACK pf_callback,
     pair_lock_type lock_type,
-    void* read_extraargs, // parameter for fetch_callback, pf_req_callback, and pf_callback
-    uint32_t num_dependent_pairs, // number of dependent pairs that we may need to checkpoint
-    PAIR* dependent_pairs,
-    enum cachetable_dirty* dependent_dirty // array stating dirty/cleanness of dependent pairs
-    );
+    // parameter for fetch_callback, pf_req_callback, and pf_callback
+    void *read_extraargs,
+    const std::vector<PAIR> &dependent_pairs,
+    // array stating dirty/cleanness of dependent pairs
+    const std::vector<enum cachetable_dirty>& dependent_dirty);
 
 // Get and pin a memory object.
 // Effects: If the memory object is in the cachetable acquire the PAIR lock on it.

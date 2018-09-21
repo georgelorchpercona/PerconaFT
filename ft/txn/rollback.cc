@@ -279,16 +279,19 @@ void toku_get_and_pin_rollback_log(TOKUTXN txn, BLOCKNUM blocknum, ROLLBACK_LOG_
     CACHEFILE cf = txn->logger->rollback_cachefile;
     FT CAST_FROM_VOIDP(h, toku_cachefile_get_userdata(cf));
     uint32_t hash = toku_cachetable_hash(cf, blocknum);
-    int r = toku_cachetable_get_and_pin_with_dep_pairs(cf, blocknum, hash,
-                                        &value,
-                                        get_write_callbacks_for_rollback_log(h),
-                                        toku_rollback_fetch_callback,
-                                        toku_rollback_pf_req_callback,
-                                        toku_rollback_pf_callback,
-                                        PL_WRITE_CHEAP, // lock_type
-                                        h,
-                                        0, NULL, NULL
-                                        );
+    int r = toku_cachetable_get_and_pin_with_dep_pairs(
+        cf,
+        blocknum,
+        hash,
+        &value,
+        get_write_callbacks_for_rollback_log(h),
+        toku_rollback_fetch_callback,
+        toku_rollback_pf_req_callback,
+        toku_rollback_pf_callback,
+        PL_WRITE_CHEAP,  // lock_type
+        h,
+        std::vector<PAIR>(),
+        std::vector<enum cachetable_dirty>());
     assert(r == 0);
     ROLLBACK_LOG_NODE CAST_FROM_VOIDP(pinned_log, value);
     assert(pinned_log->blocknum.b == blocknum.b);

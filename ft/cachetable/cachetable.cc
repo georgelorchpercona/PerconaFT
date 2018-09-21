@@ -1076,22 +1076,24 @@ write_pair_for_checkpoint_thread (evictor* ev, PAIR p)
 //
 static void checkpoint_dependent_pairs(
     CACHETABLE ct,
-    uint32_t num_dependent_pairs, // number of dependent pairs that we may need to checkpoint
-    PAIR* dependent_pairs,
-    bool* checkpoint_pending,
-    enum cachetable_dirty* dependent_dirty // array stating dirty/cleanness of dependent pairs
-    )
-{
-     for (uint32_t i =0; i < num_dependent_pairs; i++) {
-         PAIR curr_dep_pair = dependent_pairs[i];
-         // we need to update the dirtyness of the dependent pair,
-         // because the client may have dirtied it while holding its lock,
-         // and if the pair is pending a checkpoint, it needs to be written out
-         if (dependent_dirty[i]) curr_dep_pair->dirty = CACHETABLE_DIRTY;
-         if (checkpoint_pending[i]) {
-             write_locked_pair_for_checkpoint(ct, curr_dep_pair, checkpoint_pending[i]);
-         }
-     }
+    // number of dependent pairs that we may need to checkpoint
+    const std::vector<PAIR>& dependent_pairs,
+    const std::vector<bool> &checkpoint_pending,
+    // array stating dirty/cleanness of dependent pairs
+    const std::vector<enum cachetable_dirty> &dependent_dirty) {
+
+    for (uint32_t i = 0; i < dependent_pairs.size(); i++) {
+        PAIR curr_dep_pair = dependent_pairs[i];
+        // we need to update the dirtyness of the dependent pair,
+        // because the client may have dirtied it while holding its lock,
+        // and if the pair is pending a checkpoint, it needs to be written out
+        if (dependent_dirty[i])
+            curr_dep_pair->dirty = CACHETABLE_DIRTY;
+        if (checkpoint_pending[i]) {
+            write_locked_pair_for_checkpoint(
+                ct, curr_dep_pair, checkpoint_pending[i]);
+        }
+    }
 }
 
 void toku_cachetable_put_with_dep_pairs(
@@ -1101,14 +1103,12 @@ void toku_cachetable_put_with_dep_pairs(
     PAIR_ATTR attr,
     CACHETABLE_WRITE_CALLBACK write_callback,
     void *get_key_and_fullhash_extra,
-    uint32_t num_dependent_pairs, // number of dependent pairs that we may need to checkpoint
-    PAIR* dependent_pairs,
-    enum cachetable_dirty* dependent_dirty, // array stating dirty/cleanness of dependent pairs
-    CACHEKEY* key,
-    uint32_t* fullhash,
-    CACHETABLE_PUT_CALLBACK put_callback
-    )
-{
+    const std::vector<PAIR> &dependent_pairs,
+    // array stating dirty/cleanness of dependent pairs
+    const std::vector<enum cachetable_dirty>& dependent_dirty,
+    CACHEKEY *key,
+    uint32_t *fullhash,
+    CACHETABLE_PUT_CALLBACK put_callback) {
     //
     // need to get the key and filehash
     //
@@ -1148,9 +1148,9 @@ void toku_cachetable_put_with_dep_pairs(
         put_callback
         );
     pair_unlock(p);
-    bool checkpoint_pending[num_dependent_pairs];
+    std::vector<bool> checkpoint_pending(dependent_pairs.size());
     ct->list.write_pending_cheap_lock();
-    for (uint32_t i = 0; i < num_dependent_pairs; i++) {
+    for (uint32_t i = 0; i < dependent_pairs.size(); i++) {
         checkpoint_pending[i] = dependent_pairs[i]->checkpoint_pending;
         dependent_pairs[i]->checkpoint_pending = false;
     }
@@ -1162,12 +1162,7 @@ void toku_cachetable_put_with_dep_pairs(
     // dependent nodes, if they need checkpointing
     //
     checkpoint_dependent_pairs(
-        ct,
-        num_dependent_pairs,
-        dependent_pairs,
-        checkpoint_pending,
-        dependent_dirty
-        );
+        ct, dependent_pairs, checkpoint_pending, dependent_dirty);
 }
 
 void toku_cachetable_put(CACHEFILE cachefile, CACHEKEY key, uint32_t fullhash, void*value, PAIR_ATTR attr,
@@ -1305,21 +1300,21 @@ int toku_cachetable_get_and_pin (
     // will not be used after this function returns. As a result, the caller may allocate
     // read_extraargs on the stack, whereas write_extraargs must be allocated
     // on the heap.
-    return toku_cachetable_get_and_pin_with_dep_pairs (
-        cachefile, 
-        key, 
-        fullhash, 
-        value, 
+    return toku_cachetable_get_and_pin_with_dep_pairs(
+        cachefile,
+        key,
+        fullhash,
+        value,
         write_callback,
-        fetch_callback, 
+        fetch_callback,
         pf_req_callback,
         pf_callback,
         lock_type,
         read_extraargs,
-        0, // number of dependent pairs that we may need to checkpoint
-        NULL, // array of dependent pairs
-        NULL // array stating dirty/cleanness of dependent pairs
-        );
+        // dependent pairs that we may need to checkpoint
+        std::vector<PAIR>(),
+        // array stating dirty/cleanness of dependent pairs
+        std::vector<enum cachetable_dirty>());
 }
 
 // Read a pair from a cachefile into memory using the pair's fetch callback
@@ -1380,13 +1375,11 @@ static void checkpoint_pair_and_dependent_pairs(
     CACHETABLE ct,
     PAIR p,
     bool p_is_pending_checkpoint,
-    uint32_t num_dependent_pairs, // number of dependent pairs that we may need to checkpoint
-    PAIR* dependent_pairs,
-    bool* dependent_pairs_pending_checkpoint,
-    enum cachetable_dirty* dependent_dirty // array stating dirty/cleanness of dependent pairs
-    )
-{
-    
+    // dependent pairs that we may need to checkpoint
+    const std::vector<PAIR> &dependent_pairs,
+    const std::vector<bool> &dependent_pairs_pending_checkpoint,
+    // array stating dirty/cleanness of dependent pairs
+    const std::vector<enum cachetable_dirty>& dependent_dirty) {
     //
     // A checkpoint must not begin while we are checking dependent pairs or pending bits. 
     // Here is why.
@@ -1410,14 +1403,11 @@ static void checkpoint_pair_and_dependent_pairs(
     // the cachetable lock.
     //
     write_locked_pair_for_checkpoint(ct, p, p_is_pending_checkpoint);
-    
-    checkpoint_dependent_pairs(
-        ct,
-        num_dependent_pairs,
-        dependent_pairs,
-        dependent_pairs_pending_checkpoint,
-        dependent_dirty
-        );
+
+    checkpoint_dependent_pairs(ct,
+                               dependent_pairs,
+                               dependent_pairs_pending_checkpoint,
+                               dependent_dirty);
 }
 
 static void unpin_pair(PAIR p, bool read_lock_grabbed) {
@@ -1439,16 +1429,14 @@ static bool try_pin_pair(
     CACHETABLE ct,
     CACHEFILE cachefile,
     pair_lock_type lock_type,
-    uint32_t num_dependent_pairs,
-    PAIR* dependent_pairs,
-    enum cachetable_dirty* dependent_dirty,
+    const std::vector<PAIR> &dependent_pairs,
+    const std::vector<enum cachetable_dirty> &dependent_dirty,
     CACHETABLE_PARTIAL_FETCH_REQUIRED_CALLBACK pf_req_callback,
     CACHETABLE_PARTIAL_FETCH_CALLBACK pf_callback,
-    void* read_extraargs,
-    bool already_slept
-    )
-{
-    bool dep_checkpoint_pending[num_dependent_pairs];
+    void *read_extraargs,
+    bool already_slept) {
+
+    std::vector<bool> dep_checkpoint_pending(dependent_pairs.size(), false);
     bool try_again = true;
     bool expensive = (lock_type == PL_WRITE_EXPENSIVE);
     if (lock_type != PL_READ) {
@@ -1531,20 +1519,17 @@ static bool try_pin_pair(
         ct->list.read_pending_cheap_lock();
         bool p_checkpoint_pending = p->checkpoint_pending;
         p->checkpoint_pending = false;
-        for (uint32_t i = 0; i < num_dependent_pairs; i++) {
+        for (uint32_t i = 0; i < dependent_pairs.size(); i++) {
             dep_checkpoint_pending[i] = dependent_pairs[i]->checkpoint_pending;
             dependent_pairs[i]->checkpoint_pending = false;
         }
         ct->list.read_pending_cheap_unlock();
-        checkpoint_pair_and_dependent_pairs(
-            ct,
-            p,
-            p_checkpoint_pending,
-            num_dependent_pairs,
-            dependent_pairs,
-            dep_checkpoint_pending,
-            dependent_dirty
-            );
+        checkpoint_pair_and_dependent_pairs(ct,
+                                            p,
+                                            p_checkpoint_pending,
+                                            dependent_pairs,
+                                            dep_checkpoint_pending,
+                                            dependent_dirty);
     }
 
     try_again = false;
@@ -1552,27 +1537,27 @@ exit:
     return try_again;
 }
 
-int toku_cachetable_get_and_pin_with_dep_pairs (
+int toku_cachetable_get_and_pin_with_dep_pairs(
     CACHEFILE cachefile,
     CACHEKEY key,
     uint32_t fullhash,
-    void**value,
+    void **value,
     CACHETABLE_WRITE_CALLBACK write_callback,
     CACHETABLE_FETCH_CALLBACK fetch_callback,
     CACHETABLE_PARTIAL_FETCH_REQUIRED_CALLBACK pf_req_callback,
     CACHETABLE_PARTIAL_FETCH_CALLBACK pf_callback,
     pair_lock_type lock_type,
-    void* read_extraargs, // parameter for fetch_callback, pf_req_callback, and pf_callback
-    uint32_t num_dependent_pairs, // number of dependent pairs that we may need to checkpoint
-    PAIR* dependent_pairs,
-    enum cachetable_dirty* dependent_dirty // array stating dirty/cleanness of dependent pairs
-    )
+    // parameter for fetch_callback, pf_req_callback, and pf_callback
+    void *read_extraargs,
+    const std::vector<PAIR> &dependent_pairs,
+    // array stating dirty/cleanness of dependent pairs
+    const std::vector<enum cachetable_dirty>& dependent_dirty)
 // See cachetable/cachetable.h
 {
     CACHETABLE ct = cachefile->cachetable;
     bool wait = false;
     bool already_slept = false;
-    bool dep_checkpoint_pending[num_dependent_pairs];
+    std::vector<bool> dep_checkpoint_pending(dependent_pairs.size(), false);
 
     // 
     // If in the process of pinning the node we add data to the cachetable via a partial fetch
@@ -1593,19 +1578,16 @@ beginning:
     if (p) {
         // on entry, holds p->mutex (which is locked via pair_lock_by_fullhash)
         // on exit, does not hold p->mutex
-        bool try_again = try_pin_pair(
-            p,
-            ct,
-            cachefile,
-            lock_type,
-            num_dependent_pairs,
-            dependent_pairs,
-            dependent_dirty,
-            pf_req_callback,
-            pf_callback,
-            read_extraargs,
-            already_slept
-            );
+        bool try_again = try_pin_pair(p,
+                                      ct,
+                                      cachefile,
+                                      lock_type,
+                                      dependent_pairs,
+                                      dependent_dirty,
+                                      pf_req_callback,
+                                      pf_callback,
+                                      read_extraargs,
+                                      already_slept);
         if (try_again) {
             wait = true;
             goto beginning;
@@ -1642,24 +1624,20 @@ beginning:
             ct->list.write_list_unlock();
             // on entry, holds p->mutex,
             // on exit, does not hold p->mutex
-            bool try_again = try_pin_pair(
-                p,
-                ct,
-                cachefile,
-                lock_type,
-                num_dependent_pairs,
-                dependent_pairs,
-                dependent_dirty,
-                pf_req_callback,
-                pf_callback,
-                read_extraargs,
-                already_slept
-                );
+            bool try_again = try_pin_pair(p,
+                                          ct,
+                                          cachefile,
+                                          lock_type,
+                                          dependent_pairs,
+                                          dependent_dirty,
+                                          pf_req_callback,
+                                          pf_callback,
+                                          read_extraargs,
+                                          already_slept);
             if (try_again) {
                 wait = true;
                 goto beginning;
-            }
-            else {
+            } else {
                 goto got_value;
             }
         }
@@ -1667,16 +1645,14 @@ beginning:
 
         // Insert a PAIR into the cachetable
         // NOTE: At this point we still have the write list lock held.
-        p = cachetable_insert_at(
-            ct,
-            cachefile,
-            key,
-            zero_value,
-            fullhash,
-            zero_attr,
-            write_callback,
-            CACHETABLE_CLEAN
-            );
+        p = cachetable_insert_at(ct,
+                                 cachefile,
+                                 key,
+                                 zero_value,
+                                 fullhash,
+                                 zero_attr,
+                                 write_callback,
+                                 CACHETABLE_CLEAN);
         invariant_notnull(p);
 
         // Pin the pair.
@@ -1687,7 +1663,7 @@ beginning:
         if (lock_type != PL_READ) {
             ct->list.read_pending_cheap_lock();
             invariant(!p->checkpoint_pending);
-            for (uint32_t i = 0; i < num_dependent_pairs; i++) {
+            for (uint32_t i = 0; i < dependent_pairs.size(); i++) {
                 dep_checkpoint_pending[i] = dependent_pairs[i]->checkpoint_pending;
                 dependent_pairs[i]->checkpoint_pending = false;
             }
@@ -1699,12 +1675,7 @@ beginning:
 
         if (lock_type != PL_READ) {
             checkpoint_dependent_pairs(
-                ct,
-                num_dependent_pairs,
-                dependent_pairs,
-                dep_checkpoint_pending,
-                dependent_dirty
-                );
+                ct, dependent_pairs, dep_checkpoint_pending, dependent_dirty);
         }
         uint64_t t0 = get_tnow();
 

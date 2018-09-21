@@ -81,35 +81,80 @@ run_test (pair_lock_type lock_type) {
     
     void* v1;
     CACHETABLE_WRITE_CALLBACK wc = def_write_callback(NULL);
-    r = toku_cachetable_get_and_pin_with_dep_pairs(f1, make_blocknum(1), 1, &v1, wc, def_fetch, def_pf_req_callback, def_pf_callback, lock_type, NULL, 0, NULL, NULL);
+    r = toku_cachetable_get_and_pin_with_dep_pairs(f1,
+                                                   make_blocknum(1),
+                                                   1,
+                                                   &v1,
+                                                   wc,
+                                                   def_fetch,
+                                                   def_pf_req_callback,
+                                                   def_pf_callback,
+                                                   lock_type,
+                                                   NULL,
+                                                   std::vector<PAIR>(),
+                                                   std::vector<enum cachetable_dirty>());
     cachefile_kibbutz_enq(f1, kibbutz_work, f1);
     reset_unlockers(&unlockers);
-    r = toku_cachetable_get_and_pin_nonblocking(f1, make_blocknum(1), 1, &v1, wc, def_fetch, def_pf_req_callback, def_pf_callback, PL_WRITE_EXPENSIVE, NULL, &unlockers);
+    r = toku_cachetable_get_and_pin_nonblocking(f1,
+                                                make_blocknum(1),
+                                                1,
+                                                &v1,
+                                                wc,
+                                                def_fetch,
+                                                def_pf_req_callback,
+                                                def_pf_callback,
+                                                PL_WRITE_EXPENSIVE,
+                                                NULL,
+                                                &unlockers);
     // to fix #5393, we changed behavior on full fetch where if we 
     // requested a PL_WRITE_CHEAP, and had to grab a PL_WRITE_EXPENSIVE for
     // a full fetch, we keep it as a PL_WRITE_EXPENSIVE because downgrading back
     // was too big a pain.
     if (lock_type == PL_WRITE_EXPENSIVE || lock_type == PL_WRITE_CHEAP) {
         assert(r == TOKUDB_TRY_AGAIN); assert(!unlockers.locked);
-    }
-    else {
-        assert(r == 0); assert(unlockers.locked);        
-        r = toku_test_cachetable_unpin(f1, make_blocknum(1), 1, CACHETABLE_CLEAN, make_pair_attr(8)); assert(r==0);
+    } else {
+        assert(r == 0); assert(unlockers.locked);
+        r = toku_test_cachetable_unpin(
+            f1, make_blocknum(1), 1, CACHETABLE_CLEAN, make_pair_attr(8));
+        assert(r == 0);
     }
 
     // now do the same test with a partial fetch required
     pf_called = false;
-    r = toku_cachetable_get_and_pin_with_dep_pairs(f1, make_blocknum(1), 1, &v1, wc, def_fetch, true_pf_req_callback, true_pf_callback, lock_type, NULL, 0, NULL, NULL);
+    r = toku_cachetable_get_and_pin_with_dep_pairs(f1,
+                                                   make_blocknum(1),
+                                                   1,
+                                                   &v1,
+                                                   wc,
+                                                   def_fetch,
+                                                   true_pf_req_callback,
+                                                   true_pf_callback,
+                                                   lock_type,
+                                                   NULL,
+                                                   std::vector<PAIR>(),
+                                                   std::vector<enum cachetable_dirty>());
     assert(pf_called);
     cachefile_kibbutz_enq(f1, kibbutz_work, f1);
     reset_unlockers(&unlockers);
-    r = toku_cachetable_get_and_pin_nonblocking(f1, make_blocknum(1), 1, &v1, wc, def_fetch, def_pf_req_callback, def_pf_callback, PL_WRITE_EXPENSIVE, NULL, &unlockers);
+    r = toku_cachetable_get_and_pin_nonblocking(f1,
+                                                make_blocknum(1),
+                                                1,
+                                                &v1,
+                                                wc,
+                                                def_fetch,
+                                                def_pf_req_callback,
+                                                def_pf_callback,
+                                                PL_WRITE_EXPENSIVE,
+                                                NULL,
+                                                &unlockers);
     if (lock_type == PL_WRITE_EXPENSIVE) {
         assert(r == TOKUDB_TRY_AGAIN); assert(!unlockers.locked);
-    }
-    else {
-        assert(r == 0); assert(unlockers.locked);        
-        r = toku_test_cachetable_unpin(f1, make_blocknum(1), 1, CACHETABLE_CLEAN, make_pair_attr(8)); assert(r==0);
+    } else {
+        assert(r == 0);
+        assert(unlockers.locked);
+        r = toku_test_cachetable_unpin(
+            f1, make_blocknum(1), 1, CACHETABLE_CLEAN, make_pair_attr(8));
+        assert(r == 0);
     }
     
     toku_cachetable_verify(ct);

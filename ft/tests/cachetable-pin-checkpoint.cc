@@ -183,13 +183,14 @@ static void *move_numbers(void *arg) {
             less_key,
             less,
             &v1,
-            wc, fetch, def_pf_req_callback, def_pf_callback,
+            wc,
+            fetch,
+            def_pf_req_callback,
+            def_pf_callback,
             PL_WRITE_CHEAP,
             NULL,
-            0, //num_dependent_pairs
-            NULL,
-            NULL
-            );
+            std::vector<PAIR>(),
+            std::vector<enum cachetable_dirty>());
         assert(r==0);
         int64_t* first_val = (int64_t *)v1;
     
@@ -197,19 +198,22 @@ static void *move_numbers(void *arg) {
         greater_key.b = greater;
         uint32_t greater_fullhash = greater;
         enum cachetable_dirty greater_dirty = CACHETABLE_DIRTY;
-        PAIR dep_pair = data_pair[less];
-        r = toku_cachetable_get_and_pin_with_dep_pairs(
-            f1,
-            make_blocknum(greater),
-            greater,
-            &v1,
-            wc, fetch, def_pf_req_callback, def_pf_callback, 
-            PL_WRITE_CHEAP,
-            NULL,
-            1, //num_dependent_pairs
-            &dep_pair,
-            &less_dirty
-            );
+        std::vector<PAIR> dep_pair(1);
+        dep_pair[0] = data_pair[less];
+        std::vector<enum cachetable_dirty> dep_pair_dirty(1);
+        dep_pair_dirty[0] = less_dirty;
+        r = toku_cachetable_get_and_pin_with_dep_pairs(f1,
+                                                       make_blocknum(greater),
+                                                       greater,
+                                                       &v1,
+                                                       wc,
+                                                       fetch,
+                                                       def_pf_req_callback,
+                                                       def_pf_callback,
+                                                       PL_WRITE_CHEAP,
+                                                       NULL,
+                                                       dep_pair,
+                                                       dep_pair_dirty);
         assert(r==0);
     
         int64_t* second_val = (int64_t *)v1;
@@ -227,21 +231,22 @@ static void *move_numbers(void *arg) {
             third = (random() % (num_possible_values)) + greater + 1;
             CACHEKEY third_key;
             third_key.b = third;
-            dep_pair = data_pair[greater];
             uint32_t third_fullhash = third;
             enum cachetable_dirty third_dirty = CACHETABLE_DIRTY;
-            r = toku_cachetable_get_and_pin_with_dep_pairs(
-                f1,
-                make_blocknum(third),
-                third,
-                &v1,
-                wc, fetch, def_pf_req_callback, def_pf_callback,
-                PL_WRITE_CHEAP,
-                NULL,
-                1, //num_dependent_pairs
-                &dep_pair,
-                &greater_dirty
-                );
+            dep_pair[0] = data_pair[greater];
+            dep_pair_dirty[0] = greater_dirty;
+            r = toku_cachetable_get_and_pin_with_dep_pairs(f1,
+                                                           make_blocknum(third),
+                                                           third,
+                                                           &v1,
+                                                           wc,
+                                                           fetch,
+                                                           def_pf_req_callback,
+                                                           def_pf_callback,
+                                                           PL_WRITE_CHEAP,
+                                                           NULL,
+                                                           dep_pair,
+                                                           dep_pair_dirty);
             assert(r==0);
             
             int64_t* third_val = (int64_t *)v1;

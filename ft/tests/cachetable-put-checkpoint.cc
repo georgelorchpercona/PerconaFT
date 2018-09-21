@@ -160,12 +160,9 @@ static void *test_time(void *arg) {
 CACHETABLE ct;
 CACHEFILE f1;
 
-static void move_number_to_child(
-    int parent, 
-    int64_t* parent_val, 
-    enum cachetable_dirty parent_dirty
-    ) 
-{
+static void move_number_to_child(int parent,
+                                 int64_t* parent_val,
+                                 enum cachetable_dirty parent_dirty) {
     int child = 0;
     int r;
     child = ((random() % 2) == 0) ? (2*parent + 1) : (2*parent + 2); 
@@ -182,19 +179,22 @@ static void move_number_to_child(
     CACHETABLE_WRITE_CALLBACK wc = def_write_callback(NULL);
     wc.flush_callback = flush;
     wc.clone_callback = clone_callback;
-    PAIR dep_pair = data_pair[parent];
-    r = toku_cachetable_get_and_pin_with_dep_pairs(
-        f1,
-        child_key,
-        child_fullhash,
-        &v1,
-        wc, fetch, def_pf_req_callback, def_pf_callback,
-        PL_WRITE_CHEAP,
-        NULL,
-        1, //num_dependent_pairs
-        &dep_pair,
-        &parent_dirty
-        );
+    std::vector<PAIR> dep_pair(1);
+    dep_pair[0] = data_pair[parent];
+    std::vector<enum cachetable_dirty> dep_pair_dirty(1);
+    dep_pair_dirty[0] = parent_dirty;
+    r = toku_cachetable_get_and_pin_with_dep_pairs(f1,
+                                                   child_key,
+                                                   child_fullhash,
+                                                   &v1,
+                                                   wc,
+                                                   fetch,
+                                                   def_pf_req_callback,
+                                                   def_pf_callback,
+                                                   PL_WRITE_CHEAP,
+                                                   NULL,
+                                                   dep_pair,
+                                                   dep_pair_dirty);
     assert(r==0);
     
     int64_t* child_val = (int64_t *)v1;
@@ -231,13 +231,14 @@ static void *move_numbers(void *arg) {
             parent_key,
             parent_fullhash,
             &v1,
-            wc, fetch, def_pf_req_callback, def_pf_callback,
+            wc,
+            fetch,
+            def_pf_req_callback,
+            def_pf_callback,
             PL_WRITE_CHEAP,
             NULL,
-            0, //num_dependent_pairs
-            NULL,
-            NULL
-            );
+            std::vector<PAIR>(),
+            std::vector<enum cachetable_dirty>());
         assert(r==0);
         int64_t* parent_val = (int64_t *)v1;
         move_number_to_child(parent, parent_val, CACHETABLE_CLEAN);
@@ -288,44 +289,46 @@ static void merge_and_split_child(
     CACHETABLE_WRITE_CALLBACK wc = def_write_callback(NULL);
     wc.flush_callback = flush;
     wc.clone_callback = clone_callback;
-    PAIR dep_pair = data_pair[parent];
-    r = toku_cachetable_get_and_pin_with_dep_pairs(
-        f1,
-        child_key,
-        child_fullhash,
-        &v1,
-        wc, fetch, def_pf_req_callback, def_pf_callback,
-        PL_WRITE_CHEAP,
-        NULL,
-        1, //num_dependent_pairs
-        &dep_pair,
-        &parent_dirty
-        );
+    std::vector<PAIR> dep_pair(1);
+    dep_pair[0] = data_pair[parent];
+    std::vector<enum cachetable_dirty> dep_pair_dirty(1);
+    dep_pair_dirty[0] = parent_dirty;
+    r = toku_cachetable_get_and_pin_with_dep_pairs(f1,
+                                                   child_key,
+                                                   child_fullhash,
+                                                   &v1,
+                                                   wc,
+                                                   fetch,
+                                                   def_pf_req_callback,
+                                                   def_pf_callback,
+                                                   PL_WRITE_CHEAP,
+                                                   NULL,
+                                                   dep_pair,
+                                                   dep_pair_dirty);
     assert(r==0);
     int64_t* child_val = (int64_t *)v1;
     
     CACHEKEY other_child_key;
     other_child_key.b = other_child;
     uint32_t other_child_fullhash = toku_cachetable_hash(f1, other_child_key);
-    enum cachetable_dirty dirties[2];
-    dirties[0] = parent_dirty;
-    dirties[1] = child_dirty;
-    PAIR dep_pairs[2];
+    std::vector<PAIR> dep_pairs(2);
     dep_pairs[0] = data_pair[parent];
     dep_pairs[1] = data_pair[child];
-    
-    r = toku_cachetable_get_and_pin_with_dep_pairs(
-        f1,
-        other_child_key,
-        other_child_fullhash,
-        &v1,
-        wc, fetch, def_pf_req_callback, def_pf_callback,
-        PL_WRITE_CHEAP,
-        NULL,
-        2, //num_dependent_pairs
-        dep_pairs,
-        dirties
-        );
+    std::vector<enum cachetable_dirty> dep_pairs_dirty(2);
+    dep_pairs_dirty[0] = parent_dirty;
+    dep_pairs_dirty[1] = child_dirty;
+    r = toku_cachetable_get_and_pin_with_dep_pairs(f1,
+                                                   other_child_key,
+                                                   other_child_fullhash,
+                                                   &v1,
+                                                   wc,
+                                                   fetch,
+                                                   def_pf_req_callback,
+                                                   def_pf_callback,
+                                                   PL_WRITE_CHEAP,
+                                                   NULL,
+                                                   dep_pairs,
+                                                   dep_pairs_dirty);
     assert(r==0);
     int64_t* other_child_val = (int64_t *)v1;
     assert(*parent_val != INT64_MAX);
@@ -336,7 +339,7 @@ static void merge_and_split_child(
     *child_val += *other_child_val;
     *other_child_val = INT64_MAX;        
     toku_test_cachetable_unpin_and_remove(f1, other_child_key, remove_data, NULL);
-    dirties[1] = CACHETABLE_DIRTY;
+    dep_pairs_dirty[1] = CACHETABLE_DIRTY;
     child_dirty = CACHETABLE_DIRTY;
     
     // now do a split
@@ -344,19 +347,17 @@ static void merge_and_split_child(
     uint32_t new_fullhash;
     int64_t* XMALLOC(data_val);
     toku_cachetable_put_with_dep_pairs(
-          f1,
-          get_data,
-          data_val,
-          make_pair_attr(8),
-          wc,
-          &other_child,
-          2, // number of dependent pairs that we may need to checkpoint
-          dep_pairs,
-          dirties,
-          &new_key,
-          &new_fullhash,
-          put_callback_pair
-          );
+        f1,
+        get_data,
+        data_val,
+        make_pair_attr(8),
+        wc,
+        &other_child,
+        dep_pairs,
+        dep_pairs_dirty,
+        &new_key,
+        &new_fullhash,
+        put_callback_pair);
     assert(new_key.b == other_child);
     assert(new_fullhash == other_child_fullhash);
     *data_val = 5000;
@@ -391,13 +392,14 @@ static void *merge_and_split(void *arg) {
             parent_key,
             parent_fullhash,
             &v1,
-            wc, fetch, def_pf_req_callback, def_pf_callback,
+            wc,
+            fetch,
+            def_pf_req_callback,
+            def_pf_callback,
             PL_WRITE_CHEAP,
             NULL,
-            0, //num_dependent_pairs
-            NULL,
-            NULL
-            );
+            std::vector<PAIR>(),
+            std::vector<enum cachetable_dirty>());
         assert(r==0);
         int64_t* parent_val = (int64_t *)v1;
         merge_and_split_child(parent, parent_val, CACHETABLE_CLEAN);

@@ -130,7 +130,7 @@ cachetable_test (bool write_first, bool write_second, bool start_checkpoint) {
 
     void* v1;
     void* v2;
-    PAIR dependent_pairs[2];
+    std::vector<PAIR> dependent_pairs(2);
     CACHETABLE_WRITE_CALLBACK wc = def_write_callback(NULL);
     wc.flush_callback = flush;
     dest_pair = &dependent_pairs[0];
@@ -141,7 +141,7 @@ cachetable_test (bool write_first, bool write_second, bool start_checkpoint) {
     assert(r==0);
     
     // now we set the dirty state of these two.
-    enum cachetable_dirty cd[2];
+    std::vector<enum cachetable_dirty> cd(2);
     cd[0] = write_first ? CACHETABLE_DIRTY : CACHETABLE_CLEAN;
     cd[1] = write_second ? CACHETABLE_DIRTY : CACHETABLE_CLEAN;
     CHECKPOINTER cp = toku_cachetable_get_checkpointer(ct);
@@ -162,20 +162,17 @@ cachetable_test (bool write_first, bool write_second, bool start_checkpoint) {
     uint32_t put_fullhash;
     PAIR dummy_pair;
     dest_pair = &dummy_pair;
-    toku_cachetable_put_with_dep_pairs(
-        f1,
-        get_key_and_fullhash,
-        &val3,
-        make_pair_attr(8),
-        wc,
-        NULL,
-        2, //num_dependent_pairs
-        dependent_pairs,
-        cd,
-        &put_key,
-        &put_fullhash,
-        put_callback_pair
-        );
+    toku_cachetable_put_with_dep_pairs(f1,
+                                       get_key_and_fullhash,
+                                       &val3,
+                                       make_pair_attr(8),
+                                       wc,
+                                       NULL,
+                                       dependent_pairs,
+                                       cd,
+                                       &put_key,
+                                       &put_fullhash,
+                                       put_callback_pair);
     assert(put_key.b == 3);
     assert(put_fullhash == 3);
 

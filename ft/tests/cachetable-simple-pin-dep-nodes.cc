@@ -116,7 +116,7 @@ cachetable_test (bool write_first, bool write_second, bool start_checkpoint) {
     void* v1;
     void* v2;
     void* v3;
-    PAIR dependent_pairs[2];
+    std::vector<PAIR> dependent_pairs(2);
     CACHETABLE_WRITE_CALLBACK wc = def_write_callback(&val1);
     wc.flush_callback = flush;
     wc.write_extraargs = &val1;
@@ -127,7 +127,7 @@ cachetable_test (bool write_first, bool write_second, bool start_checkpoint) {
     r = toku_cachetable_get_and_pin(f1, make_blocknum(2), 2, &v2, wc, fetch, def_pf_req_callback, def_pf_callback, true, &val2);
 
     // now we set the dirty state of these two.
-    enum cachetable_dirty cd[2];
+    std::vector<enum cachetable_dirty> cd(2);
     cd[0] = write_first ? CACHETABLE_DIRTY : CACHETABLE_CLEAN;
     cd[1] = write_second ? CACHETABLE_DIRTY : CACHETABLE_CLEAN;
     CHECKPOINTER cp = toku_cachetable_get_checkpointer(ct);
@@ -144,18 +144,18 @@ cachetable_test (bool write_first, bool write_second, bool start_checkpoint) {
     v1_written = false;
     v2_written = false;
     wc.write_extraargs = &val3;
-    r = toku_cachetable_get_and_pin_with_dep_pairs(
-        f1,
-        make_blocknum(3),
-        3,
-        &v3,
-        wc, fetch, def_pf_req_callback, def_pf_callback,
-        PL_WRITE_EXPENSIVE,
-        &val3,
-        2, //num_dependent_pairs
-        dependent_pairs,
-        cd
-        );
+    r = toku_cachetable_get_and_pin_with_dep_pairs(f1,
+                                                   make_blocknum(3),
+                                                   3,
+                                                   &v3,
+                                                   wc,
+                                                   fetch,
+                                                   def_pf_req_callback,
+                                                   def_pf_callback,
+                                                   PL_WRITE_EXPENSIVE,
+                                                   &val3,
+                                                   dependent_pairs,
+                                                   cd);
     if (start_checkpoint) {
         assert(v1_written == write_first);
         assert(v2_written == write_second);
