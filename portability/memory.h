@@ -39,7 +39,8 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 #pragma once
 
 #include <stdlib.h>
-#include <toku_portability.h>
+#include <string.h>
+#include "toku_portability.h"
 
 /* Percona memory allocation functions and macros.
  * These are functions for malloc and free */
@@ -180,3 +181,33 @@ size_t toku_memory_footprint_given_usable_size(size_t touched, size_t usable);
 //   using toku_malloc_usable_size(p).
 //   If p is NULL then returns 0.
 size_t toku_memory_footprint(void * p, size_t touched);
+
+//
+// Helpers and utilities for performing memory operations on proper alignments
+// and with fully defined behaviors.
+//
+
+// Effect: Copies len bytes of memory from src to dst while validating that src
+//   is not null and len is > 0.  If num is 0 and src is null, nothing is done.
+//   Always returns dst.
+inline void *toku_memcpy(void *dst, const void *src, size_t len) {
+    if (len) {
+        return memcpy(dst, src, len);
+    }
+    return dst;
+}
+
+// Effect: Performs an unaligned memory load/copy from src of type T and returns
+//   the value.
+template <class T> inline T toku_unaligned_load(const void* src) {
+    T tmp;
+    memcpy(&tmp, src, sizeof(T));
+    return tmp;
+}
+
+// Effect: Performs an unaligned memory store from src to dst and returns the
+//   the number of bytes stored.
+template <class T> inline size_t toku_unaligned_store(void* dst, T src) {
+    memcpy(dst, &src, sizeof(T));
+    return sizeof(T);
+}
