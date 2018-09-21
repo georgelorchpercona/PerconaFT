@@ -38,6 +38,7 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 
 #include <toku_stdlib.h>
 #include <portability/toku_portability.h>
+#include <portability/memory.h>
 
 #include "x1764.h"
 
@@ -74,13 +75,13 @@ uint32_t toku_x1764_memory(const void *vbuf, int len) {
     uint64_t suma = 0, sumb = 0, sumc = 0, sumd = 0;
     while (len >= len_4_words) {
         suma = suma * (17LL * 17LL * 17LL * 17LL) +
-               *(uint64_t *)(buf + 0 * sizeof(uint64_t));
+               toku_unaligned_load<uint64_t>(buf + 0 * sizeof(uint64_t));
         sumb = sumb * (17LL * 17LL * 17LL * 17LL) +
-               *(uint64_t *)(buf + 1 * sizeof(uint64_t));
+               toku_unaligned_load<uint64_t>(buf + 1 * sizeof(uint64_t));
         sumc = sumc * (17LL * 17LL * 17LL * 17LL) +
-               *(uint64_t *)(buf + 2 * sizeof(uint64_t));
+               toku_unaligned_load<uint64_t>(buf + 2 * sizeof(uint64_t));
         sumd = sumd * (17LL * 17LL * 17LL * 17LL) +
-               *(uint64_t *)(buf + 3 * sizeof(uint64_t));
+               toku_unaligned_load<uint64_t>(buf + 3 * sizeof(uint64_t));
         buf += len_4_words;
         len -= len_4_words;
     }
@@ -88,7 +89,7 @@ uint32_t toku_x1764_memory(const void *vbuf, int len) {
         suma * 17L * 17L * 17L + sumb * 17L * 17L + sumc * 17L + sumd;
     assert(len >= 0);
     while ((uint64_t)len >= sizeof(uint64_t)) {
-        sum = sum * 17 + *(uint64_t *)buf;
+        sum = sum * 17 + toku_unaligned_load<uint64_t>(buf);
         buf += sizeof(uint64_t);
         len -= sizeof(uint64_t);
     }
@@ -152,7 +153,7 @@ void toku_x1764_add(struct x1764 *l, const void *vbuf, int len) {
         if (len >= 8) {
             sum = l->sum;
             while (len >= 8) {
-                uint64_t thisv = *(uint64_t *)cbuf;
+                uint64_t thisv = toku_unaligned_load<uint64_t>(cbuf);
                 input |= thisv << (8 * n_input_bytes);
                 sum = sum * 17 + input;
                 if (PRINT)
@@ -175,7 +176,7 @@ void toku_x1764_add(struct x1764 *l, const void *vbuf, int len) {
             l->sum = sum;
         }
         if (len >= 4) {
-            uint64_t thisv = *(uint32_t *)cbuf;
+            uint64_t thisv = toku_unaligned_load<uint32_t>(cbuf);
             if (n_input_bytes < 4) {
                 input |= thisv << (8 * n_input_bytes);
                 if (PRINT)
